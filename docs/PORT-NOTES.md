@@ -1,13 +1,127 @@
 # Port notes — GridCraft on Android
 
 Upstream: [`storytold/gridcraft`](https://github.com/storytold/gridcraft) @
-`a5137872c15fac7bf260fa2d25ea8f7e66b19dc2` (v0.5.0)
-Published APK: `gridcraft-0.5.0-arm64-v8a-v3.apk`
+`43284377d2466037628e57d8ad0c891778fdb45c` (v0.13.0)
+Published APK: `gridcraft-0.5.0-arm64-v8a-v3.apk` (the v0.1.2 release, built from v0.5.0)
 
-The port is `apps/gridcraft-android/` (`src/lib.rs` 462 lines, `src/file_picker.rs` 403,
-`src/modifiers.rs` 202, `src/prefs_watch.rs` 134) plus **7 upstream files** — a save-dialog seam
-(`save_dialogs.rs`, new) and two spreadsheet bugs that surfaced while using the port, one of which
-(`AutoSum`) is not Android-specific at all.
+The port is `apps/gridcraft-android/` (`src/lib.rs` 473 lines, `src/file_picker.rs` 480,
+`src/modifiers.rs` 202, `src/prefs_watch.rs` 141, `src/clipboard.rs`) plus **7 upstream files** — a
+save-dialog seam (`save_dialogs.rs`, new) and the call sites that use it.
+
+## 2026-10-30 — Trackpad wheel + pen hover (`vendor/winit`)
+
+This port previously used the git winit, whose Android backend dropped `MotionAction::Scroll`
+and `MotionAction::HoverMove`, so a trackpad wheel, a mouse wheel and stylus hover never
+reached the app. It now vendors the same patched winit the WordCraft and DeckCraft ports
+ship (copied into `vendor/winit/`, with `Cargo.toml` resolving winit from it), so the
+backend forwards those events to `MouseWheel` and `CursorMoved`. The `Cargo.toml` change is
+now part of this port's patch (8 tracked files).
+
+## 2026-10-30 — Flush preferences on suspend (`raw_input_hook`)
+
+A lost-focus frame now writes `ui.json` and `prefs.json` with `store_now`, so a swipe from
+Recents (or a paused Activity being killed) no longer takes the recent-documents list and
+window state with it.
+
+## 2026-10-30 — Open-with and share intents (`src/intents.rs`)
+
+**The complaint:** a workbook tapped in a file manager, or shared from another app, never reached
+GridCraft; and there was no way to hand the current workbook to another app.
+
+`src/intents.rs` covers the half that does not need `startActivityForResult`:
+
+- **Incoming `ACTION_VIEW`** — the launching URI is read at startup and copied out of a
+  `content://` URI into the cache directory; the shell opens it on its first frame (`open_path`).
+- **Incoming `ACTION_SEND`** — `EXTRA_TEXT` and `EXTRA_STREAM` are handled the same way.
+- **Outgoing `ACTION_SEND`** — `intents::share_text` starts a chooser; `share_file` is provided but
+  needs a `FileProvider` entry to work on Android 7+.
+
+The launching intent is read in `android_main` and consumed once in `Shell::logic`.
+
+**Scope:** opening a file handed to the app, and sharing text. SAF pickers remain deferred (no
+`startActivityForResult` in `android-activity` 0.6.1); the in-app picker is still the way to open
+or save.
+
+**Checked:** the module's host test passes, the crate compiles for `aarch64-linux-android`, and the
+host suite is 16/16. The JNI intent path has not run on a device.
+
+## 2026-10-30 — The system clipboard (`src/clipboard.rs`)
+
+**The complaint:** copy and paste worked only *inside* the app. A cell copied in another app could
+not be pasted into a sheet, and copying from GridCraft left nothing to paste elsewhere.
+
+Two causes, both fixed here:
+
+- **winit's Android backend has no clipboard**, so `egui-winit` fell back to its in-app simulated
+  clipboard; nothing crossed the app boundary.
+- **The backend never reports modifiers** (§7), and `egui-winit` decides Ctrl+C/X/V is a clipboard
+  shortcut from its own modifier state. On Android the three keys arrived as ordinary `Event::Key`
+  presses, so `Event::Copy`/`Cut`/`Paste` were never produced.
+
+`src/clipboard.rs` supplies:
+
+- `install(&app)` — this thread's Activity handle, captured before `run_native`.
+- `shortcuts(raw)` — in `raw_input_hook`, after the touch bridge: a plain Ctrl+C/X/V becomes
+  `Event::Copy`/`Cut`/`Paste` and the press is consumed, as on the desktop. Ctrl+V reads the
+  **system** clipboard and pushes nothing when it is empty. Ctrl+Shift/Ctrl+Alt go to the app.
+- `publish(ctx)` — after the app's `ui`: `OutputCommand::CopyText` is written with
+  `ClipData.newPlainText` + `setPrimaryClip`, and left in the command list so egui-winit's in-app
+  copy still happens.
+- `text()` — the read half, also wired in as `Services::paste_text`, which is what the ribbon and
+  menu Paste call (they do not wait for a key event).
+
+The JNI side is `ClipboardManager`/`ClipData` directly. A read Android refuses (Android 10+ allows
+reads only while the app is focused) is logged and cleared, and answers "nothing".
+
+**Scope:** plain text. A copied range with formatting still goes out as its text; HTML paste remains
+out of scope (the `clipboard_html`/`copy_html` fields stay unset).
+
+**Checked:** eight unit tests pass on the host, and the crate compiles for `aarch64-linux-android`.
+The JNI path has not run on a device — none was connected for this build.
+
+## 0. 2026-10-28 — The port was re-pinned to upstream v0.13.0
+
+The port was re-pointed from upstream `0.5.0` (`a513787`) to `0.13.0` (`43284377`). The old
+seven-file patch **did not apply**: upstream moved the code the port patches underneath it. The
+patch was re-derived against the new tree, not forced onto it.
+
+**What moved upstream, and how the port was re-derived:**
+
+- **`Services` left `lib.rs`.** Upstream `0.13.0` has it in its own `crates/ui-egui/src/services.rs`,
+  and `SheetApp::new` moved to `crates/ui-egui/src/app.rs`. The port's `pick_save_async` field is
+  therefore declared in `services.rs`, and the `SheetApp` field it needs (`pending_save`) and its
+  initialisation in `app.rs`.
+- **The save-dialog seam.** `crates/ui-egui/src/save_dialogs.rs` (new) is unchanged in substance:
+  `Services::pick_save_async` is a `Box<dyn Fn(&str) -> Receiver<Option<String>>>`, and
+  `SheetApp::ask_save` runs what asked on the frame the path arrives. `poll_save` is called from
+  `SheetApp::logic`, which upstream now keeps in `app.rs`.
+- **The three call sites moved.**
+  - `file.saveAs` was in `lib.rs`; upstream moved it to `crates/ui-egui/src/app/commands.rs`.
+  - The Backstage's export stayed in `crates/ui-egui/src/backstage.rs`.
+  - The "Save a copy" dialog was in `crates/ui-egui/src/dialogs.rs`; upstream split the dialog's
+    rendering into `crates/ui-egui/src/dialogs/show.rs`.
+- **A newer upstream behaviour was kept.** Upstream `0.13.0` treats a *relative* path typed into the
+  "Save a copy" dialog as a name that still needs a folder, and asks the picker for one. The old
+  port patch dropped that. The re-derived patch keeps it: a bare or relative name goes through
+  `ask_save`, and only an absolute path is used as typed.
+
+**Two changes from the old patch were deliberately dropped, and why:**
+
+- **The Format Painter delivery in `grid.rs`.** Upstream `0.13.0` now delivers it itself, in
+  `crates/ui-egui/src/grid/interact.rs` — so the port's backport was obsolete, and upstream's
+  version is the better one (it lives with the rest of the grid's input handling).
+- **The `AutoSum` number-format backport.** The old patch made a total inherit the number format of
+  the cells it added up, which is not Android-specific at all — it was an upstream engine feature
+  the port carried. Upstream `0.13.0` does not have it, and the engine's `auto_sum` has since been
+  refactored (`selection_totals`, `block_totals`, `guessed_range`), so carrying it would mean
+  re-deriving an *engine* change that the desktop release does not have either. Dropping it keeps
+  the Android build at upstream parity. The old patch is kept in
+  `patches/archive/0001-gridcraft-android-port-v005.patch` for reference.
+
+**Verified:** `cargo check -p gridcraft-android --target aarch64-linux-android` exits 0 against
+v0.13.0; the patch applies cleanly to a pristine `v0.13.0` checkout (`git apply --check`), and a
+tree assembled from that patch plus this repository's shell crate is byte-identical to the tree the
+APK was built from.
 
 ## 1. The shell crate
 

@@ -1,5 +1,47 @@
 # Changelog
 
+## 2026-10-30 — The system clipboard (text)
+
+| | |
+|---|---|
+| APK | `gridcraft-0.13.0-arm64-v8a-20261030.apk` — sha256 in `SHA256SUMS.txt` beside the build |
+| Package | `ai.storyteller.gridcraft` — versionName `0.13.0`, minSdk 26, targetSdk 35 |
+| ABI | `arm64-v8a` only |
+
+### Changed
+- **Copy and paste crossed the app boundary for text (`src/clipboard.rs`).** Ctrl+C/X/V now produce
+  `Event::Copy`/`Cut`/`Paste` (the Android backend never reports modifiers, so `egui-winit` never
+  did), Paste reads `ClipboardManager` through JNI, and `OutputCommand::CopyText` is written back
+  with `ClipData.newPlainText`. The ribbon and menu Paste read the same clipboard through
+  `Services::paste_text`. Plain text only: HTML/formatting is not negotiated yet.
+
+## Unreleased — re-pinned to upstream 0.13.0, Android 16 (16 KB page size)
+
+| | |
+|---|---|
+| Upstream pin | `43284377d2466037628e57d8ad0c891778fdb45c` (upstream `0.13.0`) — was `a513787` (`0.5.0`) |
+| Package | `ai.storyteller.gridcraft` — versionName `0.13.0`, minSdk 26, targetSdk 35 |
+| ABI | `arm64-v8a` only |
+| ELF page alignment | `0x4000` (16 KB) — Android 16 compatible |
+
+### Changed
+- **The upstream pin moved from 0.5.0 to 0.13.0.** The old seven-file patch did not apply: upstream
+  moved `Services` into its own module, `SheetApp::new` into `app.rs`, the `file.saveAs` command
+  into `app/commands.rs` and the dialog rendering into `dialogs/show.rs`. The patch was re-derived
+  against the new tree, not forced onto it.
+- **A relative path in "Save a copy" still asks for a folder**, as upstream does — the old port
+  patch had dropped that.
+- **Android 16 page-size compatibility.** The native library is linked with
+  `-Wl,-z,max-page-size=16384`, so every `LOAD` segment is 16 KB aligned.
+
+### Dropped
+- **The Format Painter delivery backport.** Upstream 0.13.0 delivers it itself now.
+- **The `AutoSum` number-format backport.** It was an upstream engine feature the port carried, not
+  an Android change; upstream 0.13.0's `auto_sum` has been refactored since, and carrying it would
+  make the Android build diverge from the desktop release. The old patch is kept in
+  `patches/archive/0001-gridcraft-android-port-v005.patch`.
+
+
 ## v0.1.2 — 2026-10-13 (Ctrl shortcuts)
 
 | | |

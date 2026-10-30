@@ -2,7 +2,7 @@
 
 ## Upstream
 
-**GridCraft** — <https://github.com/storytold/gridcraft> — pinned here at `a5137872c15fac7bf260fa2d25ea8f7e66b19dc2`
+**GridCraft** — <https://github.com/storytold/gridcraft> — pinned here at `43284377d2466037628e57d8ad0c891778fdb45c` (v0.13.0)
 (version `0.5.0`).
 
 Upstream is dual-licensed **Apache-2.0 OR MIT**. Both licence texts are reproduced in this

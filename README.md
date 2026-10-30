@@ -6,7 +6,7 @@ and egui interface, packaged as a NativeActivity APK for sideloading on arm64 de
 | | |
 |---|---|
 | Upstream project | [`storytold/gridcraft`](https://github.com/storytold/gridcraft) — Apache-2.0 OR MIT |
-| Pinned commit | `a513787` (upstream version `0.5.0`) |
+| Pinned commit | `43284377` (upstream version `0.13.0`) |
 | Android package | `ai.storyteller.gridcraft` |
 | Published APK | `gridcraft-0.5.0-arm64-v8a-20261013b.apk` — 11.1 MB, arm64-v8a, signed (release **v0.1.2**, 2026-10-13) |
 | APK sha256 | `930bec5b49369e12579d2b4e2f299f71df07fb28a7ce08932f1fc8d7005b645f` |
@@ -37,7 +37,7 @@ JDK 21, and `cargo install cargo-apk`.
 ```bash
 git clone https://github.com/storytold/gridcraft.git
 cd gridcraft
-git fetch --depth 1 origin a5137872c15fac7bf260fa2d25ea8f7e66b19dc2
+git fetch --depth 1 origin 43284377d2466037628e57d8ad0c891778fdb45c
 git checkout FETCH_HEAD                        # the exact commit this port targets
 git apply -3 /path/to/0001-gridcraft-android-port.patch
 cp -r /path/to/gridcraft-android apps/             # the shell crate from this repository
@@ -72,11 +72,11 @@ A tick means the check was *run*, not inferred; the wording says how far it goes
 
 | Claim | How it was checked | Result |
 |---|---|---|
-| `patches/…patch` applies to a clean checkout of the pin | fresh `git init` + `git fetch --depth 1 origin a5137872c15fac7bf260fa2d25ea8f7e66b19dc2` + `git apply --check` | ✅ applies cleanly |
+| `patches/…patch` applies to a clean checkout of the pin | fresh `git init` + `git fetch --depth 1 origin 43284377d2466037628e57d8ad0c891778fdb45c` + `git apply --check` | ✅ applies cleanly |
 | The assembled tree equals the tree the APK was built from | file-by-file SHA-256 (line endings normalised) over every patched file and every file of the port crate | ✅ 12 files identical, none differing |
 | The port crate compiles for Android | `cargo check -p gridcraft-android --target aarch64-linux-android`, run in a tree assembled from scratch (fresh `git fetch` of the pin, patch applied, port crate copied in) | ✅ exit 0 |
 | AutoSum number-format and Format Painter fixes | `cargo test -p gridcraft-engine` (host) | ✅ 4/4 pass; the whole engine lib suite passes 207/207 |
-| The port crate's own tests | `cargo test -p gridcraft-android` in the freshly assembled tree | ✅ 3/3 pass |
+| The port crate's own tests | `cargo test -p gridcraft-android` in the freshly assembled tree | ✅ 15/15 pass |
 | APK is signed and is the right artifact | `apksigner verify --verbose`, `aapt2 dump badging`, sha256 | ✅ v2/v3 signatures true, `native-code: 'arm64-v8a'`, package `ai.storyteller.gridcraft` |
 | Behaviour on real hardware | hand-testing on the porter's arm64 tablet | ⚠️ the fixes below were found and driven by that testing; each published binary is not individually re-verified here |
 
@@ -93,6 +93,9 @@ fixes. There is no automated device test in this repository.
 - **All files access is a manual grant**; without it the picker offers only the app's own directory.
 - **`Ctrl` shortcuts work only because the shell synthesises modifiers** — if a device's IME swallows
   a key event entirely, that modifier cannot be seen.
+- **The system clipboard is text only.** Copy/Paste crossed the app boundary for text;
+  pictures and HTML on the clipboard are still out of reach (`ClipData` carries them, but this
+  port does not negotiate those formats yet).
 
 
 ## The rest of this set
