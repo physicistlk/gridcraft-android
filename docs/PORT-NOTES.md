@@ -1,7 +1,7 @@
 # Port notes — GridCraft on Android
 
 Upstream: [`storytold/gridcraft`](https://github.com/storytold/gridcraft) @
-`43284377d2466037628e57d8ad0c891778fdb45c` (v0.13.0)
+`55850841` (v0.14.2)
 Published APK: `gridcraft-0.5.0-arm64-v8a-v3.apk` (the v0.1.2 release, built from v0.5.0)
 
 The port is `apps/gridcraft-android/` (`src/lib.rs` 473 lines, `src/file_picker.rs` 480,
@@ -79,7 +79,7 @@ out of scope (the `clipboard_html`/`copy_html` fields stay unset).
 **Checked:** eight unit tests pass on the host, and the crate compiles for `aarch64-linux-android`.
 The JNI path has not run on a device — none was connected for this build.
 
-## 0. 2026-10-28 — The port was re-pinned to upstream v0.13.0
+## 0. 2026-10-28 — The port was re-pinned to upstream v0.14.2
 
 The port was re-pointed from upstream `0.5.0` (`a513787`) to `0.13.0` (`43284377`). The old
 seven-file patch **did not apply**: upstream moved the code the port patches underneath it. The
@@ -119,7 +119,7 @@ patch was re-derived against the new tree, not forced onto it.
   `patches/archive/0001-gridcraft-android-port-v005.patch` for reference.
 
 **Verified:** `cargo check -p gridcraft-android --target aarch64-linux-android` exits 0 against
-v0.13.0; the patch applies cleanly to a pristine `v0.13.0` checkout (`git apply --check`), and a
+v0.14.2; the patch applies cleanly to a pristine `v0.14.2` checkout (`git apply --check`), and a
 tree assembled from that patch plus this repository's shell crate is byte-identical to the tree the
 APK was built from.
 

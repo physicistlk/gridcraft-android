@@ -37,7 +37,7 @@ JDK 21, and `cargo install cargo-apk`.
 ```bash
 git clone https://github.com/storytold/gridcraft.git
 cd gridcraft
-git fetch --depth 1 origin 43284377d2466037628e57d8ad0c891778fdb45c
+git fetch --depth 1 origin 55850841
 git checkout FETCH_HEAD                        # the exact commit this port targets
 git apply -3 /path/to/0001-gridcraft-android-port.patch
 cp -r /path/to/gridcraft-android apps/             # the shell crate from this repository
@@ -72,7 +72,7 @@ A tick means the check was *run*, not inferred; the wording says how far it goes
 
 | Claim | How it was checked | Result |
 |---|---|---|
-| `patches/…patch` applies to a clean checkout of the pin | fresh `git init` + `git fetch --depth 1 origin 43284377d2466037628e57d8ad0c891778fdb45c` + `git apply --check` | ✅ applies cleanly |
+| `patches/…patch` applies to a clean checkout of the pin | fresh `git init` + `git fetch --depth 1 origin 55850841` + `git apply --check` | ✅ applies cleanly |
 | The assembled tree equals the tree the APK was built from | file-by-file SHA-256 (line endings normalised) over every patched file and every file of the port crate | ✅ 12 files identical, none differing |
 | The port crate compiles for Android | `cargo check -p gridcraft-android --target aarch64-linux-android`, run in a tree assembled from scratch (fresh `git fetch` of the pin, patch applied, port crate copied in) | ✅ exit 0 |
 | AutoSum number-format and Format Painter fixes | `cargo test -p gridcraft-engine` (host) | ✅ 4/4 pass; the whole engine lib suite passes 207/207 |
