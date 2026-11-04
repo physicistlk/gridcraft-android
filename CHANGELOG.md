@@ -1,5 +1,28 @@
 # Changelog
 
+## 2026-11-04 — Re-pinned to upstream 0.16.0
+
+| | |
+|---|---|
+| APK | `gridcraft-0.16.0-arm64-v8a-20261104.apk` — sha256 `cebb633ad0daaae79d839de64b6aadf5e1cfcc04a9142dd2ca71e6632709119c` (built 2026-11-04, locally signed — not a published release) |
+| Upstream pin | `85e51e009c24fad47575f04d3c08f12342615d82` (upstream `0.16.0`) — was `43284377` (`0.13.0`) |
+| Package | `ai.storyteller.gridcraft` — versionName `0.16.0`, versionCode `16781312`, minSdk 26, targetSdk 35 |
+| ABI | `arm64-v8a` only |
+| ELF page alignment | `0x4000` (16 KB) — Android 16 compatible |
+
+### Changed
+- **The upstream pin moved from 0.13.0 to 0.16.0.** The canonical patch describes against
+  `0.13.0` applied cleanly to the `0.16.0` tree — the only update needed was re-deriving it
+  against the `0.16.0` tree (new line numbers/index lines) and carrying over the previously
+  un-patched `crates/ui-egui/src/save_dialogs.rs` creation, which the previous re-port left
+  as an untracked file. `patches/0001-gridcraft-android-port.patch` now carries all of:
+  `Cargo.toml` (vendored winit), `Cargo.lock` (regional allocation), and the seven
+  `crates/ui-egui` files, with `save_dialogs.rs` as the one new file.
+- **Verification:** `scripts/verify-apk-linux.sh` — package id, `native-code: 'arm64-v8a'`,
+  v2+v3 signatures, AArch64 `.so`, every LOAD segment `0x4000`-aligned, `android_main` and
+  `ANativeActivity_onCreate` exported. `cargo check -p gridcraft-android --target
+  aarch64-linux-android` also passes on the reassembled tree.
+
 ## 2026-10-30 — The system clipboard (text)
 
 | | |

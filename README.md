@@ -6,11 +6,11 @@ and egui interface, packaged as a NativeActivity APK for sideloading on arm64 de
 | | |
 |---|---|
 | Upstream project | [`storytold/gridcraft`](https://github.com/storytold/gridcraft) — Apache-2.0 OR MIT |
-| Pinned commit | `43284377` (upstream version `0.13.0`) |
+| Pinned commit | `85e51e009c24fad47575f04d3c08f12342615d82` (upstream version `0.16.0`) |
 | Android package | `ai.storyteller.gridcraft` |
 | Published APK | `gridcraft-0.5.0-arm64-v8a-20261013b.apk` — 11.1 MB, arm64-v8a, signed (release **v0.1.2**, 2026-10-13) |
 | APK sha256 | `930bec5b49369e12579d2b4e2f299f71df07fb28a7ce08932f1fc8d7005b645f` |
-| Upstream files changed | 7 files (1 of them new) — see [`patches/`](patches/) |
+| Upstream files changed | 9 files (1 of them new) — see [`patches/`](patches/) |
 | New port crate | `apps/gridcraft-android/` — 1527 lines of Rust plus resources |
 
 ## What this repository is

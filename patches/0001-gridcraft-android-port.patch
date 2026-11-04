@@ -1,18 +1,51 @@
+diff --git a/Cargo.lock b/Cargo.lock
+index 20dcf28a..827d7ed3 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -1994,6 +1994,20 @@ dependencies = [
+  "winresource",
+ ]
+ 
++[[package]]
++name = "gridcraft-android"
++version = "0.16.0"
++dependencies = [
++ "eframe",
++ "egui",
++ "gridcraft-engine",
++ "gridcraft-ui-egui",
++ "jni",
++ "log",
++ "serde_json",
++ "winit",
++]
++
+ [[package]]
+ name = "gridcraft-calc"
+ version = "0.16.0"
+@@ -6369,7 +6383,6 @@ checksum = "589f6da84c646204747d1270a2a5661ea66ed1cced2631d546fdfb155959f9ec"
+ [[package]]
+ name = "winit"
+ version = "0.30.13"
+-source = "git+https://github.com/storytold/winit.git?rev=a517b3846ee8457d84ee4975110bfda6797c44dc#a517b3846ee8457d84ee4975110bfda6797c44dc"
+ dependencies = [
+  "ahash",
+  "android-activity",
 diff --git a/Cargo.toml b/Cargo.toml
-index 9594d48f..028ac47c 100644
+index 594b2927..a927710d 100644
 --- a/Cargo.toml
 +++ b/Cargo.toml
-@@ -105,4 +105,4 @@ egui_system_font_provider = { git = "https://github.com/storytold/egui.git", rev
+@@ -113,4 +113,4 @@ egui_system_font_provider = { git = "https://github.com/storytold/egui.git", rev
  eframe = { git = "https://github.com/storytold/egui.git", rev = "6d518fc799681571963842f95b55a6b68431b15a" }
  egui_demo_lib = { git = "https://github.com/storytold/egui.git", rev = "6d518fc799681571963842f95b55a6b68431b15a" }
  egui_inspection = { git = "https://github.com/storytold/egui.git", rev = "6d518fc799681571963842f95b55a6b68431b15a" }
 -winit = { git = "https://github.com/storytold/winit.git", rev = "a517b3846ee8457d84ee4975110bfda6797c44dc" }
 +winit = { path = "vendor/winit" }
 diff --git a/crates/ui-egui/src/app.rs b/crates/ui-egui/src/app.rs
-index 6fa5def4..dcb07bf1 100644
+index 9d190083..e49819c7 100644
 --- a/crates/ui-egui/src/app.rs
 +++ b/crates/ui-egui/src/app.rs
-@@ -39,6 +39,7 @@ impl SheetApp {
+@@ -41,6 +41,7 @@ impl SheetApp {
              toast: None,
              notice: None,
              services,
@@ -20,7 +53,7 @@ index 6fa5def4..dcb07bf1 100644
              printing: Default::default(),
              print_feedback_seen: None,
              synthetic: Default::default(),
-@@ -127,6 +128,8 @@ impl SheetApp {
+@@ -130,6 +131,8 @@ impl SheetApp {
          // issues the capture command (after every widget, so a command cannot be missed).
          control::drain_screenshots(self, ctx);
          control::poll(self, ctx);
@@ -29,7 +62,7 @@ index 6fa5def4..dcb07bf1 100644
          // Printing feedback is polled once per frame, here, so hidden windows and logic-only
          // frames still see worker completion. `ui` and the desktop app no longer poll it.
          self.poll_printing(ctx);
-@@ -137,6 +140,18 @@ impl SheetApp {
+@@ -140,6 +143,18 @@ impl SheetApp {
          self.poll_async_opens();
          self.autosave(ctx);
          self.update_title(ctx);
@@ -49,10 +82,10 @@ index 6fa5def4..dcb07bf1 100644
          // One window always shows a workbook, unless each workbook has a native window of its own
          // (`doc_windows` decides what having none left means).
 diff --git a/crates/ui-egui/src/app/commands.rs b/crates/ui-egui/src/app/commands.rs
-index c7dcde0f..9708cee0 100644
+index 86a4a6cc..890890c6 100644
 --- a/crates/ui-egui/src/app/commands.rs
 +++ b/crates/ui-egui/src/app/commands.rs
-@@ -319,12 +319,16 @@ impl SheetApp {
+@@ -366,12 +366,16 @@ impl SheetApp {
              }
              "saveAs" => {
                  let suggested = self.session.active().map(|d| d.display_title()).unwrap_or_else(|| "Book1".into());
@@ -76,10 +109,10 @@ index c7dcde0f..9708cee0 100644
                      && let Some(dl) = &self.services.download
                      && let Some(b) = r.get("base64").and_then(Json::as_str).and_then(gridcraft_engine::io::base64_decode)
 diff --git a/crates/ui-egui/src/backstage.rs b/crates/ui-egui/src/backstage.rs
-index 6310dd6a..35d0b649 100644
+index 194533d3..6f16f584 100644
 --- a/crates/ui-egui/src/backstage.rs
 +++ b/crates/ui-egui/src/backstage.rs
-@@ -691,8 +691,10 @@ fn save_as(app: &mut SheetApp, ui: &mut Ui, bs: &mut Backstage, out: &mut Outcom
+@@ -695,8 +695,10 @@ fn save_as(app: &mut SheetApp, ui: &mut Ui, bs: &mut Backstage, out: &mut Outcom
              .labelled_by(label.id);
      });
      ui.add_space(14.0);
@@ -92,7 +125,7 @@ index 6310dd6a..35d0b649 100644
      let label = if web { format!("{} (.{fmt})", lang.tr("Download")) } else { lang.tr("Browse…").to_string() };
      if square_button(ui, Icon::OpenFolder, &label).clicked() && app.commit_edit(0, 0, false, false) {
          if fmt == "xlsx" {
-@@ -743,17 +745,19 @@ pub fn export_as(app: &mut SheetApp, fmt: &str) -> bool {
+@@ -747,17 +749,19 @@ pub fn export_as(app: &mut SheetApp, fmt: &str) -> bool {
      };
      let title = app.session.active().map(|d| d.display_title()).unwrap_or_else(|| "Book1".into());
      let stem = std::path::Path::new(&title).file_stem().and_then(std::ffi::OsStr::to_str).unwrap_or("Book1").to_string();
@@ -123,10 +156,10 @@ index 6310dd6a..35d0b649 100644
      if app.services.download.is_none() {
          app.message = Some(("GridCraft".into(), "Exporting needs a file picker, which this window doesn't have.".into()));
 diff --git a/crates/ui-egui/src/dialogs/show.rs b/crates/ui-egui/src/dialogs/show.rs
-index 071a94e5..ae430d43 100644
+index 70ba3fed..97cfb3b1 100644
 --- a/crates/ui-egui/src/dialogs/show.rs
 +++ b/crates/ui-egui/src/dialogs/show.rs
-@@ -293,24 +293,27 @@ pub fn show(app: &mut SheetApp, ctx: &egui::Context) {
+@@ -312,24 +312,27 @@ pub fn show(app: &mut SheetApp, ctx: &egui::Context) {
                      d.values.insert("path".into(), json!(path.clone()));
                      ok_cancel(ui, &mut confirm, &mut open);
                      if confirm {
@@ -169,10 +202,10 @@ index 071a94e5..ae430d43 100644
                      }
                  }
 diff --git a/crates/ui-egui/src/lib.rs b/crates/ui-egui/src/lib.rs
-index db9ab316..dbdad0ed 100644
+index 95f861f1..a52c3608 100644
 --- a/crates/ui-egui/src/lib.rs
 +++ b/crates/ui-egui/src/lib.rs
-@@ -46,6 +46,7 @@ pub mod pivot_pane;
+@@ -49,6 +49,7 @@ pub mod pivot_pane;
  pub mod printing;
  pub mod ribbon;
  pub mod selection_glide;
@@ -180,7 +213,7 @@ index db9ab316..dbdad0ed 100644
  pub mod tabs;
  pub mod text_box;
  pub mod theme;
-@@ -216,6 +217,9 @@ pub struct SheetApp {
+@@ -219,6 +220,9 @@ pub struct SheetApp {
      /// Dismissible info bar under the ribbon (open-time notices).
      pub notice: Option<Notice>,
      pub services: Services,
@@ -190,6 +223,95 @@ index db9ab316..dbdad0ed 100644
      pub printing: printing::State,
      print_feedback_seen: Option<printing::Feedback>,
      /// Synthetic input from agents, one batch per step (drags need several steps).
+diff --git a/crates/ui-egui/src/save_dialogs.rs b/crates/ui-egui/src/save_dialogs.rs
+new file mode 100644
+index 00000000..e774b9e9
+--- /dev/null
++++ b/crates/ui-egui/src/save_dialogs.rs
+@@ -0,0 +1,83 @@
++//! Save dialogs that don't hold the frame, and what the answer to them is for.
++//!
++//! # Why this exists
++//!
++//! `Services::pick_save` is the blocking shape: the host shows a panel and returns the chosen path
++//! in the same call. That works on the desktop (`rfd`) and cannot work on a host that draws its own
++//! picker between frames — the browser, and Android, where there is no native dialog to call at
++//! all. Those hosts return a receiver instead ([`crate::Services::pick_save_async`]) and the app
++//! does what the blocking call would have done on the frame the path arrives, exactly as
++//! [`crate::dialogs`] and [`crate::backstage`] already do for pictures and opening.
++//!
++//! # The cost of not having it
++//!
++//! Handing the host finished *bytes* instead (the web `download` path) looks equivalent and is not:
++//! the app is never told where the file went, so `DocState::path` stays `None` and the workbook is
++//! still "Book1" with unsaved changes — the title bar never changes, `Ctrl+S` asks for a location
++//! again, and closing prompts to save what was just saved. Every save dialog in this app goes
++//! through [`SheetApp::ask_save`] so that cannot happen.
++
++use std::sync::mpsc::{Receiver, TryRecvError};
++
++use crate::SheetApp;
++
++/// A save dialog the host is showing: the answer arrives on `rx`, and `after` is what the blocking
++/// `pick_save` would have run with it.
++pub(crate) struct PendingSave {
++    rx: Receiver<Option<String>>,
++    after: Box<dyn FnOnce(&mut SheetApp, &str)>,
++}
++
++impl SheetApp {
++    /// Whether a save dialog is open (its answer hasn't arrived yet).
++    pub fn save_dialog_open(&self) -> bool {
++        self.pending_save.is_some()
++    }
++
++    /// Ask for a path to save to, and do `after` with it: straight away for a blocking host dialog,
++    /// on a later frame for an asynchronous one.
++    ///
++    /// Returns false when the host has neither, which is how a caller knows to fall back to its
++    /// browser-download path — and only then, because a host with a picker must never be handed
++    /// bytes it cannot name.
++    pub(crate) fn ask_save(&mut self, suggested: &str, after: impl FnOnce(&mut SheetApp, &str) + 'static) -> bool {
++        // One dialog at a time: the app has one pending action, and while it is waiting the answer
++        // to it decides what happens.
++        if self.pending_save.is_some() {
++            return true;
++        }
++        if let Some(pick) = &self.services.pick_save {
++            if let Some(path) = pick(suggested) {
++                after(self, &path);
++            }
++            return true;
++        }
++        let Some(ask) = &self.services.pick_save_async else {
++            return false;
++        };
++        self.pending_save = Some(PendingSave { rx: ask(suggested), after: Box::new(after) });
++        true
++    }
++
++    /// Use the answer, once there is one. Called every frame from [`SheetApp::logic`].
++    pub(crate) fn poll_save(&mut self) {
++        let Some(pending) = self.pending_save.as_ref() else {
++            return;
++        };
++        match pending.rx.try_recv() {
++            Err(TryRecvError::Empty) => {}
++            Ok(answer) => {
++                let Some(PendingSave { after, .. }) = self.pending_save.take() else {
++                    return;
++                };
++                // Nothing to do with a cancelled dialog, which is what an empty answer is.
++                if let Some(path) = answer {
++                    after(self, &path);
++                }
++            }
++            // The host went away without answering (its sender was dropped): a cancellation, not a
++            // dialog this app will wait on for ever.
++            Err(TryRecvError::Disconnected) => self.pending_save = None,
++        }
++    }
++}
 diff --git a/crates/ui-egui/src/services.rs b/crates/ui-egui/src/services.rs
 index 748e23ab..d2bd2075 100644
 --- a/crates/ui-egui/src/services.rs
