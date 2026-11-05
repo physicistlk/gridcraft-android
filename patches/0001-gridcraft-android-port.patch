@@ -1,5 +1,5 @@
 diff --git a/Cargo.lock b/Cargo.lock
-index 20dcf28a..827d7ed3 100644
+index 81fb39f9..965b80c4 100644
 --- a/Cargo.lock
 +++ b/Cargo.lock
 @@ -1994,6 +1994,20 @@ dependencies = [
@@ -8,7 +8,7 @@ index 20dcf28a..827d7ed3 100644
  
 +[[package]]
 +name = "gridcraft-android"
-+version = "0.16.0"
++version = "0.16.1"
 +dependencies = [
 + "eframe",
 + "egui",
@@ -22,7 +22,7 @@ index 20dcf28a..827d7ed3 100644
 +
  [[package]]
  name = "gridcraft-calc"
- version = "0.16.0"
+ version = "0.16.1"
 @@ -6369,7 +6383,6 @@ checksum = "589f6da84c646204747d1270a2a5661ea66ed1cced2631d546fdfb155959f9ec"
  [[package]]
  name = "winit"
@@ -32,7 +32,7 @@ index 20dcf28a..827d7ed3 100644
   "ahash",
   "android-activity",
 diff --git a/Cargo.toml b/Cargo.toml
-index 594b2927..a927710d 100644
+index 8dbfea90..763e81f5 100644
 --- a/Cargo.toml
 +++ b/Cargo.toml
 @@ -113,4 +113,4 @@ egui_system_font_provider = { git = "https://github.com/storytold/egui.git", rev
@@ -41,8 +41,2557 @@ index 594b2927..a927710d 100644
  egui_inspection = { git = "https://github.com/storytold/egui.git", rev = "6d518fc799681571963842f95b55a6b68431b15a" }
 -winit = { git = "https://github.com/storytold/winit.git", rev = "a517b3846ee8457d84ee4975110bfda6797c44dc" }
 +winit = { path = "vendor/winit" }
+diff --git a/apps/gridcraft-android/Cargo.toml b/apps/gridcraft-android/Cargo.toml
+new file mode 100644
+index 00000000..7bbdb42c
+--- /dev/null
++++ b/apps/gridcraft-android/Cargo.toml
+@@ -0,0 +1,121 @@
++[package]
++name = "gridcraft-android"
++version.workspace = true
++edition.workspace = true
++license.workspace = true
++rust-version.workspace = true
++description = "GridCraft on Android: the real engine and egui shell on winit's NativeActivity backend"
++publish = false
++
++# cargo-apk turns this cdylib into the APK's lib/arm64-v8a/libgridcraft.so, and the artifact name
++# is what the injected `android.app.lib_name` meta-data points at (with `-` → `_`). A mismatch
++# yields an APK that installs and then dies on launch, so the lib name is deliberate — the same
++# shape `apps/vectorcraft-android` and `apps/wordcraft-android` use.
++[lib]
++name = "gridcraft"
++crate-type = ["cdylib"]
++
++# Omit `[lints] workspace = true`: the workspace forbids unsafe_code, which trips on the
++# `#[unsafe(no_mangle)]` entry point this crate needs, and nothing else here wants the lints.
++[dependencies]
++# The system clipboard (`src/clipboard.rs`) is a JNI call to `ClipboardManager`; jni 0.22 is
++# the version android-activity itself depends on, so this unifies rather than compiling a second
++# layer.
++jni = "0.22"
++gridcraft-engine = { workspace = true }
++gridcraft-ui-egui = { workspace = true }
++egui = { workspace = true }
++log = { workspace = true }
++serde_json = { workspace = true }
++
++# `android-native-activity` is the whole reason this builds: without a backend feature,
++# `android-activity` is pulled with no backend and eframe fails with `file not found for module
++# activity_impl` plus `Either "game-activity" or "native-activity" must be enabled as features` —
++# a missing feature, not a code problem.
++#
++# `accesskit` is deliberately absent, and here it is unreachable: GridCraft's `ui-egui` has no
++# eframe dependency at all (the desktop shell is the eframe user), so this is the only eframe in
++# the graph and it never asks for accesskit — which eframe `compile_error!`s alongside
++# `android-native-activity`, because egui's accesskit integration on Android goes through the
++# GameActivity backend while this packages NativeActivity. The same situation VectorCraft and
++# WordCraft were in; PhotoCraft's shell, whose `ui-egui` did depend on eframe, needed the
++# target-gated second declaration instead.
++#
++# The android-* features are inert elsewhere (winit only binds android-activity under
++# cfg(target_os = "android")), so the host workspace is unaffected.
++eframe = { workspace = true, features = ["default_fonts", "wgpu", "android-native-activity"] }
++# Needed to name `AndroidApp` for `NativeOptions::android_app`; eframe does not re-export winit.
++# Pinned to the exact version eframe/egui-winit build against.
++winit = { version = "=0.30.13", default-features = false, features = ["android-native-activity"] }
++
++[package.metadata.android]
++package = "ai.storyteller.gridcraft"
++apk_name = "gridcraft"
++build_targets = ["aarch64-linux-android"]
++strip = "strip"
++# Theme resources — the two edge-to-edge fixes live in res/values/styles.xml.
++resources = "res"
++
++[package.metadata.android.sdk]
++# 26 = Android 8.0: the floor for a modern Vulkan driver surface.
++min_sdk_version = 26
++target_sdk_version = 35
++
++[package.metadata.android.application]
++label = "GridCraft"
++# Variant B (immersive fullscreen) is what fixed the menu bar sitting under the notification bar
++# on the tablet; variant A is the alternative — see res/values/styles.xml.
++theme = "@style/GridcraftFullscreen"
++icon = "@mipmap/ic_launcher"
++# Keep the .so uncompressed so it can be mapped from the APK directly.
++extract_native_libs = true
++
++# The Activity must not be *re-created* when the window is resized or the app is put into
++# split-screen. Entering or leaving multi-window changes `screenLayout` and `smallestScreenSize`,
++# and an Activity that does not declare them is destroyed and built again. For a NativeActivity
++# that is fatal: winit's Android backend does not even forward the destroy (it logs
++# `TODO: forward onDestroy notification to application` and carries on), so the old event loop
++# keeps running against a dead Activity while a second one starts — the app hangs, then is killed.
++# cargo-apk's default is only `orientation|keyboardHidden|screenSize`; these are the ones a
++# fullscreen, resizable native app handles itself.
++[package.metadata.android.application.activity]
++config_changes = "orientation|keyboardHidden|screenSize|smallestScreenSize|screenLayout|density|uiMode|fontScale|keyboard|navigation|touchscreen"
++
++
++[[package.metadata.android.uses_feature]]
++name = "android.hardware.vulkan.level"
++required = false
++version = 1
++
++# Storage access for the in-app picker (src/file_picker.rs). Android 10+ forbids reading shared
++# storage by path, so the picker probes each root and only offers the ones it can actually read —
++# no permission is needed for the app's own folder, and these widen what is reachable.
++#
++# MANAGE_EXTERNAL_STORAGE ("All files access") cannot be requested at runtime: it is granted by
++# hand in Settings ▸ Apps ▸ GridCraft ▸ Special access. Play restricts it to file-manager-class
++# apps, which does not apply to a sideloaded build. Save needs it too, to write outside the app's
++# own folder.
++[[package.metadata.android.uses_permission]]
++name = "android.permission.MANAGE_EXTERNAL_STORAGE"
++
++[[package.metadata.android.uses_permission]]
++name = "android.permission.READ_MEDIA_IMAGES"
++
++# Legacy storage permissions, only meaningful before Android 11.
++[[package.metadata.android.uses_permission]]
++name = "android.permission.READ_EXTERNAL_STORAGE"
++max_sdk_version = 32
++
++[[package.metadata.android.uses_permission]]
++name = "android.permission.WRITE_EXTERNAL_STORAGE"
++max_sdk_version = 29
++
++[[package.metadata.android.application.activity.intent_filter]]
++actions = ["android.intent.action.VIEW"]
++categories = ["android.intent.category.DEFAULT"]
++data = [{ mime_type = "*/*" }]
++
++[[package.metadata.android.application.activity.intent_filter]]
++actions = ["android.intent.action.SEND"]
++categories = ["android.intent.category.DEFAULT"]
++data = [{ mime_type = "text/plain" }, { mime_type = "image/*" }]
+diff --git a/apps/gridcraft-android/res/mipmap-hdpi/ic_launcher.png b/apps/gridcraft-android/res/mipmap-hdpi/ic_launcher.png
+new file mode 100644
+index 00000000..41a10bb9
+Binary files /dev/null and b/apps/gridcraft-android/res/mipmap-hdpi/ic_launcher.png differ
+diff --git a/apps/gridcraft-android/res/mipmap-mdpi/ic_launcher.png b/apps/gridcraft-android/res/mipmap-mdpi/ic_launcher.png
+new file mode 100644
+index 00000000..5f90d0b3
+Binary files /dev/null and b/apps/gridcraft-android/res/mipmap-mdpi/ic_launcher.png differ
+diff --git a/apps/gridcraft-android/res/mipmap-xhdpi/ic_launcher.png b/apps/gridcraft-android/res/mipmap-xhdpi/ic_launcher.png
+new file mode 100644
+index 00000000..43e2249f
+Binary files /dev/null and b/apps/gridcraft-android/res/mipmap-xhdpi/ic_launcher.png differ
+diff --git a/apps/gridcraft-android/res/mipmap-xxhdpi/ic_launcher.png b/apps/gridcraft-android/res/mipmap-xxhdpi/ic_launcher.png
+new file mode 100644
+index 00000000..7fb096ec
+Binary files /dev/null and b/apps/gridcraft-android/res/mipmap-xxhdpi/ic_launcher.png differ
+diff --git a/apps/gridcraft-android/res/mipmap-xxxhdpi/ic_launcher.png b/apps/gridcraft-android/res/mipmap-xxxhdpi/ic_launcher.png
+new file mode 100644
+index 00000000..e93b626f
+Binary files /dev/null and b/apps/gridcraft-android/res/mipmap-xxxhdpi/ic_launcher.png differ
+diff --git a/apps/gridcraft-android/res/values/styles.xml b/apps/gridcraft-android/res/values/styles.xml
+new file mode 100644
+index 00000000..dea54b28
+--- /dev/null
++++ b/apps/gridcraft-android/res/values/styles.xml
+@@ -0,0 +1,54 @@
++<?xml version="1.0" encoding="utf-8"?>
++<!--
++  Two fixes for the Android 15 edge-to-edge issue, so the tablet can pick one.
++  The same two the PhotoCraft port shipped.
++
++  Cause: the APK targets targetSdkVersion 35, and Android 15 enforces
++  edge-to-edge for every app targeting 35+. The system stops insetting the
++  window and draws the app underneath a transparent status bar. eframe/winit
++  implements no inset handling (winit 0.30.13 has no Android safe-area API), so
++  egui lays GridCraft's app bar and menu bar out at y=0 — behind the
++  notification bar, where they are drawn but never receive touches.
++
++  Both themes are one attribute deep; the difference is whether the status bar
++  is made room for, or hidden entirely.
++-->
++<resources>
++
++    <!--
++      VARIANT A — keep the notification bar, put the app below it.
++
++      `windowOptOutEdgeToEdgeEnforcement` restores the old window fitting: the
++      system insets the activity's window below the status bar again, so the
++      NativeActivity surface begins underneath it and the menu bar lands where it
++      can be tapped.
++
++      Android 15 only. The platform marks this attribute deprecated in favour of
++      apps consuming WindowInsets themselves, and Android 16 ignores it. The
++      version-proof equivalent is a JNI call to
++      WindowInsetsController.setOnApplyWindowInsetsListener plus a top spacer in
++      egui, which is not implemented here.
++    -->
++    <style name="GridcraftStatusBar" parent="@android:style/Theme.DeviceDefault.NoActionBar">
++        <item name="android:windowOptOutEdgeToEdgeEnforcement">true</item>
++    </style>
++
++    <!--
++      VARIANT B — immersive, like a game: hide the status bar.
++
++      `windowFullscreen` hides the status bar, so nothing overlays the menu bar
++      and the canvas gets the whole screen height. This is the legacy mechanism,
++      so it is less certain than variant A on Android 15 — if the status bar
++      survives the edge-to-edge enforcement the menu bar stays unreachable. This
++      is the variant that was confirmed working on the tablet for PhotoCraft.
++
++      Note this hides only the *status* bar. Hiding the navigation bar too needs
++      the immersive-mode API (WindowInsetsController.hide(Type.systemBars())),
++      which is Java-only and would need a JNI bridge; there is no Java in this
++      project.
++    -->
++    <style name="GridcraftFullscreen" parent="@android:style/Theme.DeviceDefault.NoActionBar.Fullscreen">
++        <item name="android:windowFullscreen">true</item>
++    </style>
++
++</resources>
+diff --git a/apps/gridcraft-android/src/clipboard.rs b/apps/gridcraft-android/src/clipboard.rs
+new file mode 100644
+index 00000000..b4d02284
+--- /dev/null
++++ b/apps/gridcraft-android/src/clipboard.rs
+@@ -0,0 +1,432 @@
++//! The Android system clipboard, over JNI — and the two frames around it.
++//!
++//! # The gap
++//!
++//! winit 0.30.13's Android backend has no clipboard API at all (there is no `clipboard` module in
++//! `src/platform_impl/android/`), so `egui-winit` falls back to its *in-app* simulated clipboard:
++//! copy and paste work between two text fields of this app and nowhere else. Copying a paragraph
++//! in Chrome and pasting it into WordCraft does nothing, and copying from WordCraft leaves nothing
++//! for another app.
++//!
++//! The modifiers matter here too. `egui-winit` decides whether <kbd>Ctrl</kbd>+<kbd>C</kbd>,
++//! <kbd>X</kbd> or <kbd>V</kbd> is a clipboard shortcut from *its own* modifier state, which the
++//! Android backend never updates (see [`crate::modifiers`]). So on Android the three keys arrive
++//! as ordinary `Event::Key` presses, and nothing turns them into `Event::Copy`, `Event::Cut` or
++//! `Event::Paste` — which is what every Craft app waits for.
++//!
++//! # What this does
++//!
++//! - [`install`] keeps this window's [`AndroidApp`] on the thread that runs the event loop.
++//! - [`shortcuts`] rewrites <kbd>Ctrl</kbd>+<kbd>C</kbd>/<kbd>X</kbd>/<kbd>V</kbd> into
++//!   `Event::Copy`/`Cut`/`Paste`, exactly as a desktop backend would. Paste reads the *system*
++//!   clipboard, so text copied in another app arrives.
++//! - [`publish`] takes what egui copied this frame (`OutputCommand::CopyText`) and puts it on the
++//!   system clipboard, so another app can paste it. The command is left in place: egui-winit still
++//!   keeps its in-app copy, which is what makes paste work when the system clipboard is
++//!   unreadable (Android 10+ only allows a focused app to read it).
++//! - [`text`] is for the apps whose menu Paste reads the clipboard through `Services` rather than
++//!   through a key event (WordCraft's ribbon, GridCraft's ribbon, VectorCraft's menus).
++//!
++//! The JNI calls mirror what `ClipboardManager` and `ClipData` expose: `getSystemService` once per
++//! call, `getPrimaryClip`/`getText` to read, `ClipData.newPlainText` + `setPrimaryClip` to write.
++//! They are cheap (a handful of JNI calls, no allocation on the Java heap beyond the string), and
++//! only run on a clipboard gesture or when an app polls for Paste enablement.
++//!
++//! # Not here
++//!
++//! Pictures and HTML. `ClipData` can carry both (`newHtmlText`, `Uri` + `ContentResolver`), and
++//! some apps can consume them (WordCraft's formatted paste, DeckCraft's picture paste, PhotoCraft's
++//! image paste), but those need a format negotiation this module does not do yet: plain text is
++//! what every text field and every app's Paste command can take.
++
++#[cfg(target_os = "android")]
++use std::cell::RefCell;
++
++#[cfg(target_os = "android")]
++use winit::platform::android::activity::AndroidApp;
++
++#[cfg(target_os = "android")]
++thread_local! {
++    /// This window's `AndroidApp`, captured in `android_main`.
++    ///
++    /// Per-thread, not a global: android-activity warns that an `AndroidApp` dies with its
++    /// Activity, and a second window of the same app runs `android_main` on a thread of its own
++    /// (see the ports' `new_window`). Each thread's copy is cleared when its loop returns.
++    static APP: RefCell<Option<AndroidApp>> = const { RefCell::new(None) };
++}
++
++/// Remember the Activity the clipboard calls go through. Called once, before `run_native`.
++#[cfg(target_os = "android")]
++pub fn install(app: &AndroidApp) {
++    APP.with(|slot| *slot.borrow_mut() = Some(app.clone()));
++}
++
++/// The text on the system clipboard, if the clipboard holds text and this app may read it.
++///
++/// `None` covers every honest no: no Activity (host build, before `install`), an empty clipboard,
++/// an image or URI on it, and the `SecurityException`/`NullPointerException` Android raises when a
++/// background app asks (Android 10+ allows clipboard reads only while focused).
++pub fn text() -> Option<String> {
++    #[cfg(target_os = "android")]
++    {
++        return with_clipboard(read_text).flatten();
++    }
++    #[cfg(not(target_os = "android"))]
++    None
++}
++
++/// Replace the system clipboard with `text`.
++pub fn set_text(text: &str) {
++    #[cfg(target_os = "android")]
++    with_clipboard(|env: &mut jni::Env<'_>, activity: &jni::objects::JObject<'_>| {
++        write_text(env, activity, text)
++    });
++}
++
++/// Turn this frame's <kbd>Ctrl</kbd>+<kbd>C</kbd>/<kbd>X</kbd>/<kbd>V</kbd> presses into the
++/// clipboard events the apps are written for.
++///
++/// The press is consumed and replaced, as `egui-winit` does on the desktop: an app that also
++/// watches the key would otherwise paste twice. Releases are left alone — a release without its
++/// press is a case the apps already handle (that is what a Mac menu key equivalent looks like).
++///
++/// Shift and Alt are left to the app: <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>C</kbd> is Copy Merged
++/// in PhotoCraft and a different command in WordCraft, and <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>V</kbd>
++/// is Paste Special in several of them.
++pub fn shortcuts(raw: &mut egui::RawInput) {
++    shortcuts_with(raw, text);
++}
++
++fn shortcuts_with(raw: &mut egui::RawInput, read: impl FnOnce() -> Option<String>) {
++    let (mut copy, mut cut, mut paste) = (false, false, false);
++    for event in &raw.events {
++        let egui::Event::Key { key, pressed: true, modifiers, .. } = event else {
++            continue;
++        };
++        if !is_plain_command(*modifiers) {
++            continue;
++        }
++        match key {
++            egui::Key::C => copy = true,
++            egui::Key::X => cut = true,
++            egui::Key::V => paste = true,
++            _ => {}
++        }
++    }
++    if !(copy || cut || paste) {
++        return;
++    }
++
++    raw.events.retain(|event| {
++        !matches!(
++            event,
++            egui::Event::Key {
++                key: egui::Key::C | egui::Key::X | egui::Key::V,
++                pressed: true,
++                modifiers,
++                ..
++            } if is_plain_command(*modifiers)
++        )
++    });
++
++    if copy {
++        raw.events.push(egui::Event::Copy);
++    }
++    if cut {
++        raw.events.push(egui::Event::Cut);
++    }
++    if paste && let Some(text) = read() {
++        // An empty clipboard pushes nothing: that is what the desktop backend does, and a
++        // `Paste("")` would clear a text field where Paste should be a no-op.
++        if !text.is_empty() {
++            raw.events.push(egui::Event::Paste(text));
++        }
++    }
++}
++
++/// A Ctrl shortcut with no Shift or Alt: Copy, Cut and Paste, and not their variants.
++fn is_plain_command(modifiers: egui::Modifiers) -> bool {
++    (modifiers.command || modifiers.ctrl) && !modifiers.shift && !modifiers.alt
++}
++
++/// Put what egui copied this frame on the system clipboard.
++///
++/// Called from the shell's `ui` after the app, in the same frame the copy happened: the command
++/// list is cleared at the end of the frame, so this is the only place that sees it before
++/// egui-winit does.
++pub fn publish(ctx: &egui::Context) {
++    publish_with(ctx, set_text);
++}
++
++fn publish_with(ctx: &egui::Context, mut write: impl FnMut(&str)) {
++    let copied: Vec<String> = ctx.output(|output| {
++        output
++            .commands
++            .iter()
++            .filter_map(|command| match command {
++                egui::OutputCommand::CopyText(text) => Some(text.clone()),
++                _ => None,
++            })
++            .collect()
++    });
++    for text in copied {
++        if !text.is_empty() {
++            write(&text);
++        }
++    }
++}
++
++/// Run `call` with this thread attached to the VM and this window's Activity as a `Context`.
++///
++/// Errors are logged, not propagated: a clipboard read that fails is an empty paste, and a write
++/// that fails leaves egui's in-app copy working. A pending Java exception is described and then
++/// cleared, because JNI calls with an exception pending are not allowed to continue.
++#[cfg(target_os = "android")]
++fn with_clipboard<T>(
++    call: impl for<'a> FnOnce(&mut jni::Env<'a>, &jni::objects::JObject<'a>) -> jni::errors::Result<T>,
++) -> Option<T> {
++    use jni::objects::JObject;
++
++    let app = APP.with(|slot| slot.borrow().clone())?;
++    // SAFETY: `vm_as_ptr` is the JavaVM this process is already attached to, and
++    // `JavaVM::from_raw` is a singleton behind a non-null assert — passing the pointer is all it
++    // takes. `activity_as_ptr` is this Activity's own reference, valid for as long as its
++    // `AndroidApp` is; `JObject` does not own what it points at (no `Drop`), so wrapping the
++    // pointer is what android-activity's own JNI example does.
++    let vm = unsafe { jni::JavaVM::from_raw(app.vm_as_ptr().cast()) };
++    let raw_activity = app.activity_as_ptr() as jni::sys::jobject;
++
++    let result = vm.attach_current_thread(|env| -> jni::errors::Result<T> {
++        let activity = unsafe { JObject::from_raw(env, raw_activity) };
++        let result = call(env, &activity);
++        if env.exception_check() {
++            env.exception_describe();
++            env.exception_clear();
++        }
++        result
++    });
++    match result {
++        Ok(value) => Some(value),
++        Err(e) => {
++            log::warn!("clipboard: {e}");
++            None
++        }
++    }
++}
++
++/// The `ClipboardManager`, asked of the Activity (which is a `Context`).
++#[cfg(target_os = "android")]
++fn manager<'local>(
++    env: &mut jni::Env<'local>,
++    activity: &jni::objects::JObject<'local>,
++) -> jni::errors::Result<jni::objects::JObject<'local>> {
++    use jni::JValue;
++
++    let service = env
++        .get_static_field(
++            class(c"android/content/Context"),
++            name(c"CLIPBOARD_SERVICE"),
++            field("Ljava/lang/String;")?.field_signature(),
++        )?
++        .l()?;
++    let manager = env.call_method(
++        activity,
++        name(c"getSystemService"),
++        method("(Ljava/lang/String;)Ljava/lang/Object;")?.method_signature(),
++        &[JValue::Object(&service)],
++    )?;
++    manager.l()
++}
++
++/// The first item's text, if the clipboard holds any.
++#[cfg(target_os = "android")]
++fn read_text<'a>(env: &mut jni::Env<'a>, activity: &jni::objects::JObject<'a>) -> jni::errors::Result<Option<String>> {
++    use jni::{JValue, objects::JString};
++
++    let manager = manager(env, activity)?;
++    let clip = env.call_method(
++        &manager,
++        name(c"getPrimaryClip"),
++        method("()Landroid/content/ClipData;")?.method_signature(),
++        &[],
++    )?;
++    if clip.is_null() {
++        return Ok(None);
++    }
++    let clip = clip.l()?;
++    let count = env
++        .call_method(&clip, name(c"getItemCount"), method("()I")?.method_signature(), &[])?
++        .i()?;
++    if count <= 0 {
++        return Ok(None);
++    }
++    let item = env
++        .call_method(
++            &clip,
++            name(c"getItemAt"),
++            method("(I)Landroid/content/ClipData$Item;")?.method_signature(),
++            &[JValue::Int(0)],
++        )?
++        .l()?;
++    let text = env.call_method(
++        &item,
++        name(c"getText"),
++        method("()Ljava/lang/CharSequence;")?.method_signature(),
++        &[],
++    )?;
++    if text.is_null() {
++        return Ok(None);
++    }
++    let text = text.l()?;
++    let string = env.call_method(
++        &text,
++        name(c"toString"),
++        method("()Ljava/lang/String;")?.method_signature(),
++        &[],
++    )?;
++    if string.is_null() {
++        return Ok(None);
++    }
++    let string = string.l()?;
++    // The reference is an owned local (`JValueOwned`), so handing it to the `JString` wrapper
++    // transfers it rather than duplicating it; neither type deletes a local reference on drop.
++    let string: JString<'_> = unsafe { JString::from_raw(env, string.into_raw()) };
++    Ok(Some(string.try_to_string(env)?))
++}
++
++/// Replace the clipboard with one plain-text clip.
++#[cfg(target_os = "android")]
++fn write_text<'a>(env: &mut jni::Env<'a>, activity: &jni::objects::JObject<'a>, text: &str) -> jni::errors::Result<()> {
++    use jni::JValue;
++
++    let manager = manager(env, activity)?;
++    let label = env.new_string("Craft")?;
++    let body = env.new_string(text)?;
++    let clip = env.call_static_method(
++        class(c"android/content/ClipData"),
++        name(c"newPlainText"),
++        method("(Ljava/lang/CharSequence;Ljava/lang/CharSequence;)Landroid/content/ClipData;")?
++            .method_signature(),
++        &[JValue::Object(&label), JValue::Object(&body)],
++    )?;
++    if clip.is_null() {
++        return Ok(());
++    }
++    let clip = clip.l()?;
++    env.call_method(
++        &manager,
++        name(c"setPrimaryClip"),
++        method("(Landroid/content/ClipData;)V")?.method_signature(),
++        &[JValue::Object(&clip)],
++    )?;
++    Ok(())
++}
++
++/// A class name as JNI wants it (`android/content/Intent`, not `android.intent.Intent`).
++#[cfg(target_os = "android")]
++fn class(name: &'static std::ffi::CStr) -> &'static jni::strings::JNIStr {
++    jni::strings::JNIStr::from_cstr(name).expect("a literal class name")
++}
++
++/// A member name as JNI wants it. A C string literal cannot carry an interior NUL or invalid
++/// MUTF-8, so this cannot fail on one.
++#[cfg(target_os = "android")]
++fn name(name: &'static std::ffi::CStr) -> &'static jni::strings::JNIStr {
++    jni::strings::JNIStr::from_cstr(name).expect("a literal member name")
++}
++
++#[cfg(target_os = "android")]
++fn method(signature: &str) -> jni::errors::Result<jni::signature::RuntimeMethodSignature> {
++    jni::signature::RuntimeMethodSignature::from_str(signature)
++}
++
++#[cfg(target_os = "android")]
++fn field(signature: &str) -> jni::errors::Result<jni::signature::RuntimeFieldSignature> {
++    jni::signature::RuntimeFieldSignature::from_str(signature)
++}
++
++#[cfg(test)]
++mod tests {
++    use egui::{Event, Key, Modifiers, RawInput};
++
++    use super::{publish_with, shortcuts_with};
++
++    fn key(key: Key, pressed: bool, modifiers: Modifiers) -> Event {
++        Event::Key { key, physical_key: None, pressed, repeat: false, modifiers }
++    }
++
++    fn ctrl() -> Modifiers {
++        Modifiers { ctrl: true, command: true, ..Default::default() }
++    }
++
++    fn run(events: Vec<Event>, clipboard: Option<&str>) -> Vec<Event> {
++        let mut raw = RawInput { events, ..Default::default() };
++        let clipboard = clipboard.map(str::to_owned);
++        shortcuts_with(&mut raw, || clipboard.clone());
++        raw.events
++    }
++
++    #[test]
++    fn ctrl_c_becomes_a_copy_event_and_the_press_is_consumed() {
++        let events = run(vec![key(Key::C, true, ctrl())], None);
++        assert_eq!(events, vec![Event::Copy], "one copy, and no Key press left for the app to act on twice");
++    }
++
++    #[test]
++    fn ctrl_x_becomes_a_cut_event() {
++        assert_eq!(run(vec![key(Key::X, true, ctrl())], None), vec![Event::Cut]);
++    }
++
++    #[test]
++    fn ctrl_v_pastes_the_system_clipboard() {
++        let events = run(vec![key(Key::V, true, ctrl())], Some("from another app"));
++        assert_eq!(events, vec![Event::Paste("from another app".into())]);
++    }
++
++    #[test]
++    fn ctrl_v_with_an_empty_clipboard_does_paste_nothing() {
++        assert!(run(vec![key(Key::V, true, ctrl())], None).is_empty());
++        assert!(run(vec![key(Key::V, true, ctrl())], Some("")).is_empty(), "an empty clip is not a paste");
++    }
++
++    #[test]
++    fn a_plain_v_is_typing_and_is_left_alone() {
++        let events = vec![key(Key::V, true, Modifiers::default())];
++        assert_eq!(run(events.clone(), Some("clipboard")), events);
++    }
++
++    #[test]
++    fn shift_and_alt_variants_belong_to_the_app() {
++        for modifiers in [
++            Modifiers { ctrl: true, command: true, shift: true, ..Default::default() },
++            Modifiers { ctrl: true, command: true, alt: true, ..Default::default() },
++        ] {
++            let events = vec![key(Key::C, true, modifiers)];
++            assert_eq!(run(events.clone(), Some("clipboard")), events, "Copy Merged/Paste Special must reach the app");
++        }
++    }
++
++    #[test]
++    fn a_release_without_its_press_is_left_alone() {
++        let events = vec![key(Key::V, false, ctrl())];
++        assert_eq!(run(events.clone(), Some("clipboard")), events);
++    }
++
++    #[test]
++    fn copied_text_reaches_the_system_clipboard() {
++        let ctx = egui::Context::default();
++        ctx.copy_text("selected words".to_owned());
++        let mut written = Vec::new();
++        publish_with(&ctx, |text| written.push(text.to_owned()));
++        assert_eq!(written, vec!["selected words".to_owned()]);
++    }
++
++    #[test]
++    fn an_empty_copy_is_not_written() {
++        let ctx = egui::Context::default();
++        ctx.copy_text(String::new());
++        let mut wrote = false;
++        publish_with(&ctx, |_| wrote = true);
++        assert!(!wrote, "clearing a selection must not clear the system clipboard");
++    }
++}
+diff --git a/apps/gridcraft-android/src/file_picker.rs b/apps/gridcraft-android/src/file_picker.rs
+new file mode 100644
+index 00000000..4efa548a
+--- /dev/null
++++ b/apps/gridcraft-android/src/file_picker.rs
+@@ -0,0 +1,480 @@
++//! An in-app file picker for Android, drawn with egui — no Java, no native dialog.
++//!
++//! # Why this exists
++//!
++//! `rfd` has no Android backend (its `backend.rs` compiles no module at all for a
++//! target that is neither Linux/BSD, macOS, Windows nor wasm32), and Android's
++//! own picker — the Storage Access Framework — needs `startActivityForResult`,
++//! which `android-activity` 0.6 does not expose. So a ported desktop app has no
++//! file dialogs at all: Open and Save As are silently treated as cancelled.
++//! This module draws the picker instead.
++//!
++//! # How it plugs in
++//!
++//! Every app in this suite has a host-services seam that is *asynchronous* on
++//! the platforms that can't block the frame — the browser build uses it, and so
++//! does this. [`request`] queues a dialog and returns a [`Receiver`] the app
++//! polls once a frame; [`draw`] answers on it from a later frame. The app's own
++//! follow-up (open the file, save there and carry on) then runs, unchanged.
++//!
++//! Shape per app:
++//!
++//! - `Services::file_dialog(req) -> Receiver<Option<String>>` (WordCraft, this
++//!   crate's `FileDialogRequest`): answer `Some(path)`, or `None` for cancelled.
++//! - `Services::pick_save_async(name) -> Receiver<Option<String>>` (GridCraft,
++//!   DeckCraft): the same, for Save As and the exports. Without it the app is
++//!   handed only finished bytes and never learns where they went.
++//! - `Services::open_async` + `Services::inbox` and `pick_picture_async(inbox)`
++//!   (GridCraft, DeckCraft — the web seam): the shell polls the receiver, reads
++//!   the file and pushes `(name, bytes)` into the inbox.
++//! - `download(name, bytes)` (GridCraft, DeckCraft — the last resort): ask for a
++//!   path, then write the bytes there.
++//! - `rfd::AsyncFileDialog` (PdfCraft): the crate's own `crate::rfd` shim, which
++//!   registers here and hands back a future the picker's answer completes.
++//!
++//! An empty answer means cancelled, which is what each of those seams reads as
++//! "the user backed out". Never drop the sender instead.
++//!
++//! # One dialog per window, not per process
++//!
++//! The dialog in flight is a **thread-local**, not a global. A second window of
++//! the same app is a second `android_main` on a thread of its own (a second
++//! Activity, which android-activity supports), and a global would give the two
++//! windows one shared dialog: the second window's request would cancel the
++//! first's, both would draw it, and the file the user tapped could open in the
++//! other window.
++//!
++//! # Permissions
++//!
++//! Android 10+ forbids reading `/storage/emulated/0/Download` by path. Two
++//! routes exist and this picker works with either, because it probes each root
++//! and only offers the ones it can actually read:
++//!
++//! - **App folder** — `external_data_path()`, the app's own directory. Always
++//!   readable and writable, no permission at all. Files can be pushed there over
++//!   USB.
++//! - **Shared storage** — Download / Pictures / DCIM / Documents. Needs
++//!   "All files access" (`MANAGE_EXTERNAL_STORAGE`, granted by hand in
++//!   Settings ▸ Apps ▸ <App> ▸ Special access) or `READ_MEDIA_IMAGES` for
++//!   reading media. All four are declared in the crate's `Cargo.toml`.
++
++use std::cell::RefCell;
++use std::path::{Path, PathBuf};
++use std::sync::OnceLock;
++use std::sync::mpsc::{Receiver, Sender, channel};
++
++/// The app's external files directory, captured in `android_main`.
++///
++/// `<shared storage>/Android/data/<package>/files` — always readable and
++/// writable with no permission, so it is both the picker's default root and the
++/// place Save falls back to. Shared by every window of the app, which is right:
++/// there is one such folder.
++pub static EXT_DIR: OnceLock<PathBuf> = OnceLock::new();
++
++const SHARED_ROOT: &str = "/storage/emulated/0";
++
++/// Which dialog is open.
++#[derive(Clone, Copy, PartialEq, Eq, Debug)]
++pub enum Kind {
++    /// One file to open.
++    Open,
++    /// Several files.
++    OpenMany,
++    /// A path to save to.
++    Save,
++    /// A folder.
++    Folder,
++}
++
++/// The dialog being shown: what was asked, and how to answer it.
++struct Pending {
++    kind: Kind,
++    title: String,
++    /// Extensions the listing is filtered to (none: every file).
++    extensions: Option<Vec<String>>,
++    /// Directory being browsed.
++    dir: PathBuf,
++    /// File name for a Save dialog.
++    name: String,
++    /// Chosen files, for a multi-select dialog.
++    picked: Vec<PathBuf>,
++    /// A message to show inside the picker (usually a permission problem).
++    note: Option<String>,
++    /// Whether the starting directory was already applied.
++    started: bool,
++    /// Where the answer goes; the app polls it once a frame.
++    answer: Option<Sender<Vec<PathBuf>>>,
++}
++
++thread_local! {
++    /// The dialog *this* window is showing. One per thread; see the module docs.
++    static PENDING: RefCell<Option<Pending>> = const { RefCell::new(None) };
++}
++
++/// Every extension a filter list offers, or `None` when it offers none (then
++/// every file is listed). Convenience for the call sites that build filters.
++///
++/// Not every app reaches every entry point in this file; it is one file shared by four shells, so
++/// an unused one is expected rather than a mistake to delete.
++#[allow(dead_code)]
++pub fn extensions(filters: &[&[&str]]) -> Option<Vec<String>> {
++    let exts: Vec<String> = filters.iter().flat_map(|e| e.iter().map(|s| (*s).to_string())).collect();
++    (!exts.is_empty()).then_some(exts)
++}
++
++/// Queue a dialog and return the receiver its answer arrives on.
++///
++/// A dialog already open in *this* window is answered "cancelled" first; the app
++/// can only use one answer at a time, and leaving the old request waiting would
++/// strand it.
++pub fn request(kind: Kind, title: &str, extensions: Option<Vec<String>>, suggested: Option<String>) -> Receiver<Vec<PathBuf>> {
++    let (tx, rx) = channel();
++    PENDING.with(|slot| {
++        let mut slot = slot.borrow_mut();
++        if let Some(prev) = slot.take()
++            && let Some(tx) = prev.answer
++        {
++            let _ = tx.send(Vec::new());
++        }
++        *slot = Some(Pending {
++            kind,
++            title: title.to_string(),
++            extensions,
++            dir: PathBuf::new(),
++            name: suggested.unwrap_or_default(),
++            picked: Vec::new(),
++            note: None,
++            started: false,
++            answer: Some(tx),
++        });
++    });
++    rx
++}
++
++/// Whether this window has a dialog waiting to be drawn.
++#[allow(dead_code)]
++pub fn is_open() -> bool {
++    PENDING.with(|slot| slot.borrow().is_some())
++}
++
++/// Close this window's dialog, if any, answering "cancelled" — for a shell that
++/// is quitting while one is open.
++#[allow(dead_code)]
++pub fn cancel() {
++    PENDING.with(|slot| {
++        if let Some(pending) = slot.borrow_mut().take()
++            && let Some(tx) = pending.answer
++        {
++            let _ = tx.send(Vec::new());
++        }
++    });
++}
++
++/// Roots to offer, as (label, path).
++fn roots() -> Vec<(String, PathBuf)> {
++    let mut v = Vec::new();
++    if let Some(d) = EXT_DIR.get() {
++        v.push(("App folder".to_string(), d.clone()));
++        // Sibling of the app's own files, still owned by the app.
++        if let Some(parent) = d.parent() {
++            v.push(("App storage".to_string(), parent.to_path_buf()));
++        }
++    }
++    for (label, sub) in [("Download", "Download"), ("Pictures", "Pictures"), ("DCIM", "DCIM"), ("Documents", "Documents")] {
++        v.push((label.to_string(), Path::new(SHARED_ROOT).join(sub)));
++    }
++    v.push(("Internal storage".to_string(), PathBuf::from(SHARED_ROOT)));
++    v
++}
++
++/// The app's folder in `Android/media`, which *is* reachable over a USB cable (`Android/data` is
++/// not, from Android 11 on): `…/Android/data/<package>/files` → `…/Android/media/<package>`.
++pub fn media_dir() -> Option<PathBuf> {
++    media_dir_from(EXT_DIR.get()?)
++}
++
++/// The derivation, on its own so it can be pinned by a test: `…/Android/data/<package>/files`
++/// → `…/Android/media/<package>`.
++fn media_dir_from(external_files: &Path) -> Option<PathBuf> {
++    let package_dir = external_files.parent()?;
++    let android = package_dir.parent()?.parent()?;
++    Some(android.join("media").join(package_dir.file_name()?))
++}
++
++/// The Fonts folder inside it: the visible folder a font file is dropped into.
++pub fn fonts_dir() -> Option<PathBuf> {
++    Some(media_dir()?.join("Fonts"))
++}
++
++/// Point the font scan at a folder the user can reach over a USB cable.
++///
++/// # Why this is needed on Android and on no other platform
++///
++/// `system_font_dirs()` in this app's font code takes its Linux branch here and scans
++/// `/usr/share/fonts`, `$HOME/.fonts` and `$HOME/.local/share/fonts` — and none of those exist on
++/// Android: the platform's own faces are in `/system/fonts`, and `HOME` is unset. So the app knows
++/// only its bundled families and there is no way to add one — where VectorCraft and PhotoCraft have
++/// `set_platform_font_files`/`set_app_font_dir` hooks, this app's font code has neither. It *does*
++/// read `HOME` at every scan, though, so pointing `HOME` at the app's media folder and putting the
++/// fonts where that branch looks gives the same result with no change to the app: drop a `.ttf`
++/// into `Fonts/` over the cable, reopen the app, and it is in the font list.
++///
++/// The two names the scan looks for are hidden ones (`.fonts`, `.local/share/fonts`), so both are
++/// symlinks to the visible `Fonts` folder — the user drops a file in one place and the app reads it
++/// from the other.
++///
++/// The scan runs once per process (a `OnceLock` in the app), which is why a new font needs the app
++/// reopened rather than a reload.
++#[cfg(target_os = "android")]
++pub fn register_fonts() {
++    let Some(fonts) = fonts_dir() else {
++        log::warn!("fonts: no Fonts folder to register; adding a font will not work");
++        return;
++    };
++    let Some(media) = media_dir() else {
++        return;
++    };
++    if let Err(e) = std::fs::create_dir_all(&fonts) {
++        log::warn!("fonts: could not make {}: {e}", fonts.display());
++        return;
++    }
++    log::info!("fonts: the Fonts folder is {}", fonts.display());
++    // SAFETY: called from `android_main` before eframe starts, so nothing else is reading the
++    // environment yet; the app's font code only ever reads `HOME`.
++    unsafe { std::env::set_var("HOME", &media) };
++    link_fonts_dir(&fonts, &media.join(".fonts"));
++    link_fonts_dir(&fonts, &media.join(".local").join("share").join("fonts"));
++}
++
++/// Make `link` a directory symlink to `target`, replacing a stale one. Failure is logged and
++/// survivable: the folder the user drops fonts into still exists, the app just cannot see it yet.
++#[cfg(target_os = "android")]
++fn link_fonts_dir(target: &Path, link: &Path) {
++    if let Some(parent) = link.parent() {
++        let _ = std::fs::create_dir_all(parent);
++    }
++    if std::fs::read_link(link).is_ok() {
++        let _ = std::fs::remove_file(link);
++    }
++    if !link.exists()
++        && let Err(e) = std::os::unix::fs::symlink(target, link)
++    {
++        log::warn!("fonts: could not link {} → {}: {e}", link.display(), target.display());
++    }
++}
++
++
++/// The best directory to open first: the app folder is always writable, so it
++/// is the only safe default — a desktop path arriving as a suggestion never
++/// exists on the device.
++fn default_dir() -> PathBuf {
++    EXT_DIR.get().cloned().unwrap_or_else(|| PathBuf::from(SHARED_ROOT))
++}
++
++fn readable(dir: &Path) -> bool {
++    std::fs::read_dir(dir).is_ok()
++}
++
++/// Directory entries, folders first, filtered by `extensions` when given.
++fn entries(dir: &Path, extensions: Option<&Vec<String>>) -> Result<(Vec<PathBuf>, Vec<PathBuf>), String> {
++    let rd = std::fs::read_dir(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
++    let (mut dirs, mut files) = (Vec::new(), Vec::new());
++    for entry in rd.flatten() {
++        let path = entry.path();
++        let name = entry.file_name().to_string_lossy().to_string();
++        if name.starts_with('.') {
++            continue;
++        }
++        if path.is_dir() {
++            dirs.push(path);
++        } else if let Some(exts) = extensions {
++            let ext = path.extension().map(|e| e.to_string_lossy().to_ascii_lowercase());
++            if ext.as_ref().is_some_and(|e| exts.iter().any(|w| w.eq_ignore_ascii_case(e))) {
++                files.push(path);
++            }
++        } else {
++            files.push(path);
++        }
++    }
++    dirs.sort_by_key(|p| p.file_name().map(|n| n.to_string_lossy().to_ascii_lowercase()));
++    files.sort_by_key(|p| p.file_name().map(|n| n.to_string_lossy().to_ascii_lowercase()));
++    Ok((dirs, files))
++}
++
++fn file_label(path: &Path) -> String {
++    path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default()
++}
++
++/// Draw the picker if this window has a dialog queued. Called from the shell's
++/// `ui`, *after* forwarding to the app's own `ui`, so the window floats above
++/// the editor.
++pub fn draw(ctx: &egui::Context) {
++    // Taken out for the duration rather than borrowed, so nothing in here can trip over a
++    // re-entrant borrow; it is put back below while the user has not answered.
++    let Some(mut pending) = PENDING.with(|slot| slot.borrow_mut().take()) else {
++        return;
++    };
++    let kind = pending.kind;
++    // First frame: pick a starting directory.
++    if !pending.started {
++        pending.started = true;
++        pending.dir = default_dir();
++        if kind == Kind::Save && pending.name.is_empty() {
++            pending.name = "untitled".to_string();
++        }
++    }
++
++    let mut answer: Option<Vec<PathBuf>> = None;
++    let mut cancel = false;
++    let mut navigate: Option<PathBuf> = None;
++
++    let dir = pending.dir.clone();
++    let listing = entries(&dir, pending.extensions.as_ref());
++    let multi = kind == Kind::OpenMany;
++    // A tablet screen is smaller than the desktop default, and in portrait
++    // narrower than a hard-coded desktop width. `content_rect` is the area egui
++    // considers safe (it excludes an OS status bar where the backend reports one).
++    let screen = ctx.content_rect();
++    let (w, h) = ((screen.width() * 0.92).min(720.0), (screen.height() * 0.82).min(620.0));
++    let title = pending.title.clone();
++
++    egui::Window::new(title)
++        .collapsible(false)
++        .resizable(true)
++        .default_width(w)
++        .default_height(h)
++        .default_pos(screen.center() - egui::vec2(w, h) / 2.0)
++        .show(ctx, |ui| {
++            // Finger-sized rows: the default spacing is sized for a mouse.
++            ui.spacing_mut().item_spacing = egui::vec2(6.0, 6.0);
++            ui.spacing_mut().button_padding = egui::vec2(10.0, 8.0);
++
++            // Roots
++            ui.horizontal_wrapped(|ui| {
++                for (label, path) in roots() {
++                    let ok = readable(&path);
++                    let here = path == dir;
++                    let text = if ok { label } else { format!("{label} \u{1F512}") };
++                    if ui.add_enabled(ok && !here, egui::Button::new(text)).clicked() {
++                        navigate = Some(path);
++                    }
++                }
++            });
++            ui.separator();
++
++            // Current path + up
++            ui.horizontal_wrapped(|ui| {
++                if ui.button("\u{2B06} Up").clicked()
++                    && let Some(parent) = dir.parent()
++                {
++                    navigate = Some(parent.to_path_buf());
++                }
++                if ui.button("\u{1F4C1} App folder").clicked() {
++                    navigate = Some(default_dir());
++                }
++                ui.label(egui::RichText::new(dir.display().to_string()).monospace().small());
++            });
++
++            if let Some(note) = &pending.note {
++                ui.colored_label(egui::Color32::from_rgb(220, 160, 60), note);
++            }
++
++            ui.separator();
++            let list_h = (h - 190.0).max(120.0);
++            egui::ScrollArea::vertical().max_height(list_h).show(ui, |ui| match &listing {
++                Err(e) => {
++                    ui.label("Cannot read this folder.");
++                    ui.label(egui::RichText::new(e.clone()).monospace().weak().small());
++                    ui.label("Grant \"All files access\" in Settings \u{25B8} Apps \u{25B8} Special access to browse shared storage.");
++                }
++                Ok((dirs, files)) => {
++                    if dirs.is_empty() && files.is_empty() {
++                        ui.label("(empty \u{2014} no matching files)");
++                    }
++                    for d in dirs {
++                        if ui.button(format!("\u{1F4C1} {}", file_label(d))).clicked() {
++                            navigate = Some(d.clone());
++                        }
++                    }
++                    if kind != Kind::Folder {
++                        for f in files {
++                            let chosen = pending.picked.iter().any(|p| p == f);
++                            let mark = if chosen { "\u{2611}" } else { "\u{2610}" };
++                            let label = if multi { format!("{mark} {}", file_label(f)) } else { format!("   {}", file_label(f)) };
++                            if ui.button(label).clicked() {
++                                if kind == Kind::Save {
++                                    pending.name = file_label(f);
++                                } else if multi {
++                                    if chosen {
++                                        pending.picked.retain(|p| p != f);
++                                    } else {
++                                        pending.picked.push(f.clone());
++                                    }
++                                } else {
++                                    answer = Some(vec![f.clone()]);
++                                }
++                            }
++                        }
++                    }
++                }
++            });
++
++            ui.separator();
++            ui.horizontal_wrapped(|ui| match kind {
++                Kind::Save => {
++                    ui.label("File name:");
++                    ui.add(egui::TextEdit::singleline(&mut pending.name).desired_width((w - 260.0).max(160.0)));
++                    if ui.button("Save").clicked() {
++                        let name = pending.name.trim().to_string();
++                        if name.is_empty() {
++                            pending.note = Some("Enter a file name.".to_string());
++                        } else {
++                            answer = Some(vec![dir.join(name)]);
++                        }
++                    }
++                }
++                Kind::Folder => {
++                    if ui.button("Choose this folder").clicked() {
++                        answer = Some(vec![dir.clone()]);
++                    }
++                }
++                Kind::OpenMany => {
++                    let n = pending.picked.len();
++                    let label = if n == 0 { "Place".to_string() } else { format!("Place {n} file(s)") };
++                    if ui.add_enabled(n > 0, egui::Button::new(label)).clicked() {
++                        answer = Some(pending.picked.clone());
++                    }
++                }
++                Kind::Open => {
++                    if ui.button("Open").clicked() {
++                        // A file has to be tapped in the list above for an Open dialog.
++                        pending.note = Some("Tap a file to open it.".to_string());
++                    }
++                }
++            });
++            if ui.button("Cancel").clicked() {
++                cancel = true;
++            }
++
++            if dir == default_dir() {
++                ui.label(egui::RichText::new("Tip: push files here over USB, or grant \"All files access\" to browse the whole tablet.").weak().small());
++            }
++        });
++
++    if let Some(dir) = navigate {
++        pending.dir = dir;
++        pending.note = None;
++    }
++    if answer.is_some() || cancel {
++        // Cancelled: an empty answer is what every seam here reads as one.
++        let paths = answer.unwrap_or_default();
++        if let Some(tx) = pending.answer.take() {
++            let _ = tx.send(paths);
++        }
++    } else {
++        // Still open: it stays this window's dialog. The app only wakes the window about once a
++        // second while it waits, so the picker keeps asking for frames itself.
++        PENDING.with(|slot| *slot.borrow_mut() = Some(pending));
++        ctx.request_repaint();
++    }
++}
+diff --git a/apps/gridcraft-android/src/intents.rs b/apps/gridcraft-android/src/intents.rs
+new file mode 100644
+index 00000000..7729f566
+--- /dev/null
++++ b/apps/gridcraft-android/src/intents.rs
+@@ -0,0 +1,299 @@
++//! Incoming and outgoing Android intents — the half of "open with / share" that does not need
++//! `startActivityForResult`.
++//!
++//! # The gap
++//!
++//! `android-activity` 0.6.1 does not expose `startActivityForResult`, so the Storage Access
++//! Framework's `ACTION_OPEN_DOCUMENT`/`ACTION_CREATE_DOCUMENT` pickers cannot be driven from
++//! Rust alone (they need an `onActivityResult` override in a Java `Activity` subclass). What
++//! *is* reachable without Java glue is everything that goes through the Activity's *launching*
++//! intent and through fire-and-forget `startActivity` calls:
++//!
++//! - **Incoming `ACTION_VIEW`** — another app hands us a file ("Open with WordCraft"). The URI
++//!   arrives in `getIntent().getData()` at startup; a `content://` URI is copied to a file in
++//!   the app's cache directory and the shell opens that file on its first frame.
++//! - **Incoming `ACTION_SEND`** — another app shares text or an image. `EXTRA_TEXT` is kept for
++//!   the app to import; `EXTRA_STREAM` is copied to the cache directory like a `VIEW` URI.
++//! - **Outgoing `ACTION_SEND`** — "share this document/text" builds a chooser intent and starts
++//!   it with `startActivity`. Text needs no `FileProvider`; a file does, and the manifest has
++//!   none yet, so `share_file` is provided but documented as needing a provider before it works
++//!   on Android 7+.
++//!
++//! Text-only reads are cheap (a handful of JNI calls); copying a `content://` stream reads the
++//! whole file into memory once, which is what the desktop's "open" path does anyway.
++
++use std::cell::RefCell;
++use std::path::{Path, PathBuf};
++
++#[cfg(target_os = "android")]
++use winit::platform::android::activity::AndroidApp;
++
++#[cfg(target_os = "android")]
++thread_local! {
++    static APP: RefCell<Option<AndroidApp>> = const { RefCell::new(None) };
++}
++
++#[derive(Debug)]
++pub enum LaunchIntent {
++    /// Open this file (copied to the cache dir when it came in as a `content://` URI).
++    OpenFile(PathBuf),
++    /// Import this text (a shared note, a snippet from another app).
++    ImportText(String),
++}
++
++/// Remember the Activity the intent calls go through. Called once, before `run_native`.
++#[cfg(target_os = "android")]
++pub fn install(app: &AndroidApp) {
++    APP.with(|slot| *slot.borrow_mut() = Some(app.clone()));
++}
++
++#[cfg(not(target_os = "android"))]
++pub fn install() {}
++
++/// Read the launching intent, if any, and turn it into something the shell can act on.
++///
++/// Returns `None` on the host build, before `install`, when there is no launching intent, or when
++/// the intent is something this app does not handle (a different action, or a URI it cannot read).
++pub fn launch() -> Option<LaunchIntent> {
++    #[cfg(target_os = "android")]
++    {
++        return with_app(read_launch);
++    }
++    #[cfg(not(target_os = "android"))]
++    None
++}
++
++/// Start a text share sheet (no `FileProvider` needed).
++pub fn share_text(text: &str) {
++    #[cfg(target_os = "android")]
++    with_app(|app| write_share_text(app, text));
++}
++
++/// Start a file share sheet. Needs a `FileProvider` entry in the manifest to work on Android 7+;
++/// without one, `startActivity` throws `FileUriExposedException` and the call is logged and
++/// ignored. Provided so the wiring exists; the manifest change is a follow-up.
++pub fn share_file(path: &Path, mime: &str) {
++    #[cfg(target_os = "android")]
++    with_app(|app| write_share_file(app, path, mime));
++}
++
++#[cfg(target_os = "android")]
++fn with_app<T>(call: impl FnOnce(&AndroidApp) -> T) -> T {
++    APP.with(|slot| {
++        let guard = slot.borrow();
++        let app = guard.as_ref().expect("intents::install was not called");
++        call(app)
++    })
++}
++
++// The functions below are only compiled on Android; on other targets `launch`/`share_*` are no-ops
++// or return `None`, so the host tests never touch JNI.
++
++#[cfg(target_os = "android")]
++fn read_launch(app: &AndroidApp) -> Option<LaunchIntent> {
++    use jni::objects::JObject;
++
++    let raw_activity = app.activity_as_ptr() as jni::sys::jobject;
++    let vm = unsafe { jni::JavaVM::from_raw(app.vm_as_ptr().cast()) };
++
++    vm.attach_current_thread(|env| -> jni::errors::Result<Option<LaunchIntent>> {
++        use jni::JValue;
++        let activity = unsafe { JObject::from_raw(env, raw_activity) };
++        let intent = env
++            .call_method(&activity, name(c"getIntent"), method("()Landroid/content/Intent;").unwrap().method_signature(), &[])?
++            .l()?;
++        if intent.is_null() {
++            return Ok(None);
++        }
++        let action = call_string(env, &intent, c"getAction")?;
++        let action = action.as_deref().unwrap_or("");
++
++        // ACTION_SEND: text or a stream.
++        if action == "android.intent.action.SEND" {
++            let extra_text = string_extra(env, &intent, "android.intent.extra.TEXT");
++            if let Some(text) = extra_text.filter(|t| !t.trim().is_empty()) {
++                return Ok(Some(LaunchIntent::ImportText(text)));
++            }
++            // EXTRA_STREAM
++            let key = env.new_string("android.intent.extra.STREAM")?;
++            let value = env
++                .call_method(&intent, name(c"getParcelableExtra"), method("(Ljava/lang/String;)Landroid/os/Parcelable;").unwrap().method_signature(), &[JValue::Object(&key)])?
++                .l()?;
++            if !value.is_null() {
++                let raw_uri = value.into_raw();
++                if let Some(path) = copy_uri(env, &activity, raw_uri, app) {
++                    return Ok(Some(LaunchIntent::OpenFile(path)));
++                }
++            }
++            return Ok(None);
++        }
++
++        // ACTION_VIEW: a file.
++        if action == "android.intent.action.VIEW" {
++            let uri = env
++                .call_method(&intent, name(c"getData"), method("()Landroid/net/Uri;").unwrap().method_signature(), &[])?
++                .l()?;
++            if !uri.is_null() {
++                let raw_uri = uri.into_raw();
++                if let Some(path) = copy_uri(env, &activity, raw_uri, app) {
++                    return Ok(Some(LaunchIntent::OpenFile(path)));
++                }
++            }
++        }
++
++        Ok(None)
++    })
++    .ok()
++    .flatten()
++}
++
++#[cfg(target_os = "android")]
++fn copy_uri(env: &mut jni::Env<'_>, activity: &jni::objects::JObject<'_>, raw_uri: jni::sys::jobject, app: &AndroidApp) -> Option<PathBuf> {
++    use jni::JValue;
++    let uri = unsafe { jni::objects::JObject::from_raw(env, raw_uri) };
++
++    // Resolve a display name for the cached file.
++    let resolver = env
++        .call_method(activity, name(c"getContentResolver"), method("()Landroid/content/ContentResolver;").unwrap().method_signature(), &[])
++        .ok()?
++        .l()
++        .ok()?;
++    if resolver.is_null() {
++        return None;
++    }
++
++    let stream = env
++        .call_method(&resolver, name(c"openInputStream"), method("(Landroid/net/Uri;)Ljava/io/InputStream;").unwrap().method_signature(), &[JValue::Object(&uri)])
++        .ok()?
++        .l()
++        .ok()?;
++    if stream.is_null() {
++        return None;
++    }
++
++    // Read the whole stream.
++    let mut bytes = Vec::new();
++    let buf = env.new_byte_array(64 * 1024).ok()?;
++    loop {
++        let n = env
++            .call_method(&stream, name(c"read"), method("([B)I").unwrap().method_signature(), &[JValue::Object(&buf)])
++            .ok()?
++            .i()
++            .ok()?;
++        if n <= 0 {
++            break;
++        }
++        let mut chunk = vec![0i8; n as usize];
++        env.get_byte_array_region(&buf, 0, &mut chunk);
++        bytes.extend(chunk.iter().map(|&b| b as u8));
++    }
++    let _ = env.call_method(&stream, name(c"close"), method("()V").unwrap().method_signature(), &[]);
++
++    // Cache dir + a name derived from the URI's last path segment.
++    let cache = app.internal_data_path().unwrap_or_else(|| PathBuf::from(".")).join("intent-cache");
++    let _ = std::fs::create_dir_all(&cache);
++    let name = uri_last_segment(env, &uri).unwrap_or_else(|| "shared.bin".to_string());
++    let safe = name.replace(|c: char| !c.is_alphanumeric() && c != '.' && c != '-' && c != '_', "_");
++    let dest = cache.join(if safe.is_empty() { "shared.bin".to_string() } else { safe });
++    std::fs::write(&dest, &bytes).ok()?;
++    Some(dest)
++}
++
++#[cfg(target_os = "android")]
++fn uri_last_segment(env: &mut jni::Env<'_>, uri: &jni::objects::JObject<'_>) -> Option<String> {
++    let last = env
++        .call_method(uri, name(c"getLastPathSegment"), method("()Ljava/lang/String;").unwrap().method_signature(), &[])
++        .ok()?
++        .l()
++        .ok()?;
++    if last.is_null() {
++        return None;
++    }
++    let s: jni::objects::JString<'_> = unsafe { jni::objects::JString::from_raw(env, last.into_raw()) };
++    s.try_to_string(env).ok()
++}
++
++#[cfg(target_os = "android")]
++fn string_extra(env: &mut jni::Env<'_>, intent: &jni::objects::JObject<'_>, key: &str) -> Option<String> {
++    use jni::JValue;
++    let key = env.new_string(key).ok()?;
++    let value = env
++        .call_method(intent, name(c"getStringExtra"), method("(Ljava/lang/String;)Ljava/lang/String;").unwrap().method_signature(), &[JValue::Object(&key)])
++        .ok()?
++        .l()
++        .ok()?;
++    if value.is_null() {
++        return None;
++    }
++    let s: jni::objects::JString<'_> = unsafe { jni::objects::JString::from_raw(env, value.into_raw()) };
++    s.try_to_string(env).ok()
++}
++
++#[cfg(target_os = "android")]
++fn call_string(env: &mut jni::Env<'_>, obj: &jni::objects::JObject<'_>, method_name: &std::ffi::CStr) -> jni::errors::Result<Option<String>> {
++    let value = env
++        .call_method(obj, jni::strings::JNIStr::from_cstr(method_name).unwrap(), method("()Ljava/lang/String;").unwrap().method_signature(), &[])?
++        .l()?;
++    if value.is_null() {
++        return Ok(None);
++    }
++    let s: jni::objects::JString<'_> = unsafe { jni::objects::JString::from_raw(env, value.into_raw()) };
++    Ok(Some(s.try_to_string(env)?))
++}
++
++
++#[cfg(target_os = "android")]
++fn write_share_text(app: &AndroidApp, text: &str) {
++    use jni::JValue;
++    let raw_activity = app.activity_as_ptr() as jni::sys::jobject;
++    let vm = unsafe { jni::JavaVM::from_raw(app.vm_as_ptr().cast()) };
++    let _ = vm.attach_current_thread(|env| -> jni::errors::Result<()> {
++        let activity = unsafe { jni::objects::JObject::from_raw(env, raw_activity) };
++        let action_send = env.new_string("android.intent.action.SEND")?;
++        let text_plain = env.new_string("text/plain")?;
++        let chooser_title = env.new_string("Share")?;
++        let intent = env.new_object(class(c"android/content/Intent"), method("()V").ok().unwrap().method_signature(), &[])?;
++        let _ = env.call_method(&intent, name(c"setAction"), method("(Ljava/lang/String;)Landroid/content/Intent;").ok().unwrap().method_signature(), &[JValue::Object(&action_send)])?;
++        let _ = env.call_method(&intent, name(c"setType"), method("(Ljava/lang/String;)Landroid/content/Intent;").ok().unwrap().method_signature(), &[JValue::Object(&text_plain)])?;
++        let key = env.new_string("android.intent.extra.TEXT")?;
++        let body = env.new_string(text)?;
++        let _ = env.call_method(&intent, name(c"putExtra"), method("(Ljava/lang/String;Ljava/lang/String;)Landroid/content/Intent;").ok().unwrap().method_signature(), &[JValue::Object(&key), JValue::Object(&body)])?;
++        let chooser = env.call_static_method(class(c"android/content/Intent"), name(c"createChooser"), method("(Landroid/content/Intent;Ljava/lang/CharSequence;)Landroid/content/Intent;").ok().unwrap().method_signature(), &[JValue::Object(&intent), JValue::Object(&chooser_title)])?.l()?;
++        env.call_method(&activity, name(c"startActivity"), method("(Landroid/content/Intent;)V").ok().unwrap().method_signature(), &[JValue::Object(&chooser)])?;
++        Ok(())
++    });
++}
++
++#[cfg(target_os = "android")]
++fn write_share_file(app: &AndroidApp, path: &Path, mime: &str) {
++    // File sharing needs a FileProvider URI on Android 7+. Without a provider entry in the
++    // manifest this throws FileUriExposedException; log and skip rather than crash.
++    log::warn!("intents::share_file({}) not implemented: needs a FileProvider in the manifest", path.display());
++    let _ = (app, mime);
++}
++
++#[cfg(target_os = "android")]
++fn class(name: &'static std::ffi::CStr) -> &'static jni::strings::JNIStr {
++    jni::strings::JNIStr::from_cstr(name).expect("literal class name")
++}
++
++#[cfg(target_os = "android")]
++fn name(name: &'static std::ffi::CStr) -> &'static jni::strings::JNIStr {
++    jni::strings::JNIStr::from_cstr(name).expect("literal member name")
++}
++
++#[cfg(target_os = "android")]
++fn method(signature: &str) -> jni::errors::Result<jni::signature::RuntimeMethodSignature> {
++    jni::signature::RuntimeMethodSignature::from_str(signature)
++}
++
++#[cfg(test)]
++mod tests {
++    // Host-side: nothing JNI-related runs; just make sure the enum is constructible.
++    use super::LaunchIntent;
++    #[test]
++    fn launch_intent_variants_exist() {
++        let _ = LaunchIntent::OpenFile(std::path::PathBuf::from("/tmp/x"));
++        let _ = LaunchIntent::ImportText("hi".to_string());
++    }
++}
+diff --git a/apps/gridcraft-android/src/lib.rs b/apps/gridcraft-android/src/lib.rs
+new file mode 100644
+index 00000000..4ab20c86
+--- /dev/null
++++ b/apps/gridcraft-android/src/lib.rs
+@@ -0,0 +1,513 @@
++//! GridCraft on Android (arm64-v8a): the real engine and egui shell, running on winit's
++//! NativeActivity backend.
++//!
++//! # What this crate is
++//!
++//! A shell around the *unmodified* GridCraft crates — `gridcraft-engine` (the workbook model,
++//! the formula engine, XLSX) and `gridcraft-ui-egui` (the ribbon, Backstage, grid, dialogs).
++//! Nothing in those crates is patched. This crate supplies only what `apps/gridcraft` would
++//! normally supply: the [`Services`] implementation, the preferences files, the window options
++//! and the entry point. The same shape the PhotoCraft, VectorCraft and WordCraft ports used.
++//!
++//! # Why a separate crate, and not a feature on `apps/gridcraft`
++//!
++//! That crate cannot build for Android as written: it carries native dialogs (`rfd`), the OS
++//! clipboard (`arboard`), a control server and a desktop appearance watcher. Verified with
++//! `cargo check -p gridcraft --target aarch64-linux-android`: `arboard` stops first, with
++//! `cannot find Set in module platform` — it has no Android backend at all — and `rfd` fails the
++//! same way with `the trait bound FileDialog: FilePickerDialogImpl is not satisfied`.
++//!
++//! `gridcraft_ui_egui::Services` is a plain struct of `Option<Box<dyn Fn…>>` fields that derives
++//! `Default`, so the fix is not to patch the app but to build a platform that supplies what it
++//! can and omits the rest. Its `ui-egui` is Android-clean: `cargo check -p gridcraft-ui-egui
++//! --target aarch64-linux-android` passes with no changes.
++//!
++//! # Which half of the seam this shell fills, and why it is not `pick_open`/`pick_save`
++//!
++//! GridCraft's dialogs come in two shapes. `pick_open` and `pick_save` are the *blocking* ones —
++//! on the desktop they run `rfd` in line and return the chosen path immediately. That cannot
++//! work here: a picker this shell has to *draw* needs the frame to end and come back, so a
++//! function that must return a path now can never show one. Leaving both `None` is what makes
++//! the app take its other branch, the one it already has for hosts that cannot block — the
++//! browser build's:
++//!
++//! - **Open / Insert Picture** — `open_async` and `pick_picture_async` start the pick, and the
++//!   file arrives later through `Services::inbox` as `(name, bytes)`, exactly as a browser
++//!   file input delivers it. The app opens or inserts it on the next frame.
++//! - **Save As / Export** — `download(name, bytes)` is handed the finished file, exactly as the
++//!   browser is. Here it asks for a path first and writes there.
++//!
++//! So every dialog is reachable, and the only visible difference from the desktop is that Save
++//! asks for the folder (the app is not the one holding a path afterwards — see "Gaps").
++//!
++//! # Feature notes
++//!
++//! - `android-native-activity` **must** be on. Without a backend feature, `android-activity` is
++//!   pulled with no backend and the build fails with `file not found for module activity_impl`
++//!   plus `Either "game-activity" or "native-activity" must be enabled as features`.
++//! - `accesskit` **must** be off, and here it is unreachable: `ui-egui` has no eframe dependency
++//!   at all, so this crate is the only eframe user in the graph and never asks for it.
++//! - `NativeOptions::android_app` must be `Some(..)`: eframe hands it to
++//!   `EventLoopBuilderExtAndroid::with_android_app` and returns an error without it.
++//!
++//! # What Android cannot do yet
++//!
++//! Honest gaps, not oversights:
++//!
++//! - **A saved workbook does not learn its own path.** The desktop's `pick_save` hands the path
++//!   back to the app, which records it, so the next Ctrl+S writes silently to the same file.
++//!   This shell is given the bytes instead (that is the seam), so the write happens here and the
++//!   session keeps `path = None`: the title bar stays "Book1" and the next Save asks again. The
++//!   bytes written are the document's, so nothing is lost — it is the remembering that is
++//!   missing. Anything else would have to guess which document was active when the user
++//!   answered, and saving the wrong workbook over a file is worse than asking twice.
++//! - **No system clipboard.** `arboard` has no Android backend, so `copy_html` and `paste_html`
++//!   stay `None`: Cut/Copy/Paste of cells falls back to whatever egui itself can do, and the
++//!   HTML flavour that keeps pasted numbers numeric is gone with it.
++//! - **No opening links.** `open_url` stays `None`, so the Discord/website/GitHub links in the
++//!   credits and the Backstage do nothing — that needs an `Intent` through JNI.
++//! - **No printing.** `print` stays `None`; File ▸ Print reports what GridCraft's own fallback
++//!   says rather than handing a PDF to a print service.
++//! - **No stylus pressure or tilt.** A pen degrades to ordinary touch.
++//! - **No system title bar.** The app draws its own, which is what the tablet shows, fullscreen.
++//!
++//! The workbook model, the formula engine, the grid and the XLSX writer are platform-neutral and
++//! unaffected, and the interface fonts are embedded, so text works with no system font folder.
++
++use std::path::{Path, PathBuf};
++use std::sync::mpsc::Receiver;
++use std::sync::{Arc, Mutex, OnceLock};
++use std::time::Duration;
++
++use gridcraft_engine::Session;
++use gridcraft_ui_egui::{Inbox, Services, SheetApp, UiState};
++
++mod clipboard;
++mod file_picker;
++mod intents;
++mod modifiers;
++mod prefs_watch;
++mod touch_scroll;
++
++/// The app's private data directory, captured in `android_main` before any service closure runs:
++/// `<internal storage>/Android/data/ai.storyteller.gridcraft/files`.
++///
++/// `internal_data_path()` needs no runtime permission — it is the app's own sandbox — which is
++/// why the preferences and the log land here rather than in shared storage.
++static DATA_DIR: OnceLock<PathBuf> = OnceLock::new();
++
++/// Messages the shell shows the user when work it started on a worker thread fails.
++///
++/// Reading a picked file and writing a Save happen off the frame, where nothing can raise a
++/// dialog; without this a failed write to a folder the app may not touch would look like the
++/// Save button doing nothing.
++type Notices = Arc<Mutex<Vec<String>>>;
++
++/// Mirrors the desktop `load_prefs`, with the settings directory replaced by the app's own.
++fn load_prefs(app: &mut SheetApp) {
++    let Some(dir) = DATA_DIR.get() else {
++        return;
++    };
++    // First run: follow the device's language and appearance until the user chooses and saves.
++    app.ui.language = gridcraft_ui_egui::i18n::Language::system();
++    app.ui.system_theme = true;
++    if let Ok(bytes) = std::fs::read(dir.join("ui.json"))
++        && let Ok(ui) = serde_json::from_slice::<UiState>(&bytes)
++    {
++        let saved = serde_json::from_slice(&bytes).ok().and_then(|v| gridcraft_ui_egui::i18n::saved_language(&v));
++        let language = saved.unwrap_or(app.ui.language);
++        app.ui = ui;
++        app.ui.language = language;
++    }
++    if let Ok(bytes) = std::fs::read(dir.join("prefs.json"))
++        && let Ok(prefs) = serde_json::from_slice(&bytes)
++    {
++        app.session.prefs = prefs;
++    }
++}
++
++/// How often the preferences are looked at; a change is written at the next look. Short enough
++/// that nothing a user would miss is stale, long enough to cost nothing while the app is idle.
++const PREFS_EVERY: Duration = Duration::from_secs(2);
++
++/// What goes to `ui.json` — where the recent-documents list lives.
++fn prefs_ui_bytes(app: &SheetApp) -> Vec<u8> {
++    serde_json::to_vec_pretty(&app.ui).unwrap_or_default()
++}
++
++/// What goes to `prefs.json` — the engine's own preferences.
++fn prefs_engine_bytes(app: &SheetApp) -> Vec<u8> {
++    serde_json::to_vec_pretty(&app.session.prefs).unwrap_or_default()
++}
++
++/// The two files the desktop writes on its way out, in the app's own folder, which always exists.
++fn prefs_files() -> (Option<PathBuf>, Option<PathBuf>) {
++    let Some(dir) = DATA_DIR.get() else {
++        return (None, None);
++    };
++    let _ = std::fs::create_dir_all(dir);
++    (Some(dir.join("ui.json")), Some(dir.join("prefs.json")))
++}
++
++/// Write the preferences if they changed, at most every [`PREFS_EVERY`] (see [`prefs_watch`]).
++fn save_prefs_if_due(app: &SheetApp, ui: &mut prefs_watch::Writer, engine: &mut prefs_watch::Writer) {
++    if ui.due() {
++        let bytes = prefs_ui_bytes(app);
++        ui.store(&bytes);
++    }
++    if engine.due() {
++        let bytes = prefs_engine_bytes(app);
++        engine.store(&bytes);
++    }
++}
++
++
++/// The workbooks Open offers, as on the desktop.
++fn workbook_extensions() -> Option<Vec<String>> {
++    file_picker::extensions(&[&["xlsx", "xlsm", "xls", "xlsb", "ods", "csv", "tsv", "txt", "json"]])
++}
++
++fn picture_extensions() -> Option<Vec<String>> {
++    file_picker::extensions(&[&["png", "jpg", "jpeg"]])
++}
++
++/// Wait for a pick off the UI thread, read what it names and hand it to the app the way a
++/// browser file input does: `(name, bytes)` pushed into the inbox the app polls each frame.
++///
++/// The desktop's `pick_open` returns a path instead, and `open_async` exists precisely for hosts
++/// that cannot — on the web the bytes come from a `File` handle, here from the filesystem.
++fn deliver(inbox: Inbox, ctx: egui::Context, picks: Receiver<Vec<PathBuf>>, notices: Notices) {
++    let reading = std::thread::Builder::new().name("file read".into()).spawn(move || {
++        let Ok(paths) = picks.recv() else {
++            return;
++        };
++        let mut arrived = false;
++        for path in paths {
++            match std::fs::read(&path) {
++                Ok(bytes) => {
++                    let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
++                    log::info!("read {} ({} bytes)", path.display(), bytes.len());
++                    inbox.lock().unwrap_or_else(std::sync::PoisonError::into_inner).push((name, bytes));
++                    arrived = true;
++                }
++                Err(e) => {
++                    log::error!("couldn't read {}: {e}", path.display());
++                    notices.lock().unwrap_or_else(std::sync::PoisonError::into_inner).push(format!("Couldn't read {}: {e}", path.display()));
++                }
++            }
++        }
++        // The app is idle while it waits; wake it to use what arrived.
++        if arrived {
++            ctx.request_repaint();
++        }
++    });
++    if let Err(e) = reading {
++        log::error!("couldn't start the file-reading thread: {e}");
++    }
++}
++
++/// Write the bytes the app handed to `download`, once the user has named a folder and file.
++///
++/// This is GridCraft's browser save path landing on a real filesystem: it asks where, then
++/// writes there. The app's own folder (what Save suggests first) always works with no
++/// permission at all; anywhere else under shared storage needs "All files access".
++fn save(ctx: egui::Context, picks: Receiver<Vec<PathBuf>>, bytes: Vec<u8>, notices: Notices) {
++    let writing = std::thread::Builder::new().name("file write".into()).spawn(move || {
++        let Ok(paths) = picks.recv() else {
++            return;
++        };
++        let Some(path) = paths.into_iter().next() else {
++            return;
++        };
++        match std::fs::write(&path, &bytes) {
++            Ok(()) => log::info!("wrote {} ({} bytes)", path.display(), bytes.len()),
++            Err(e) => {
++                log::error!("couldn't write {}: {e}", path.display());
++                notices.lock().unwrap_or_else(std::sync::PoisonError::into_inner).push(format!("Couldn't write {}: {e}", path.display()));
++            }
++        }
++        ctx.request_repaint();
++    });
++    if let Err(e) = writing {
++        log::error!("couldn't start the file-writing thread: {e}");
++    }
++}
++
++/// The Android `Services`: the asynchronous half of the desktop's, plus the picker.
++///
++/// Everything the desktop fills with a blocking dialog or a system integration stays `None`,
++/// and that is deliberate on every field — see the module docs.
++fn android_services(ctx: egui::Context, notices: Notices) -> Services {
++    let inbox: Inbox = Inbox::default();
++
++    let open_inbox = inbox.clone();
++    let open_ctx = ctx.clone();
++    let open_notices = notices.clone();
++    let picture_ctx = ctx.clone();
++    let picture_notices = notices.clone();
++    let save_ctx = ctx.clone();
++    let save_notices = notices.clone();
++
++    Services {
++        // File ▸ Save As: a save dialog that answers between frames, so the workbook records the
++        // file the user chose. Handing the app's own `download` its bytes instead (below) writes
++        // the file and tells the app nothing, which is why the title stayed "Book1" and closing
++        // asked to save what had just been saved.
++        pick_save_async: Some(Box::new(move |suggested: &str| {
++            let picks = file_picker::request(file_picker::Kind::Save, "Save As \u{2014} Android", None, Some(suggested.to_string()));
++            path_answer(picks)
++        })),
++        // File ▸ Open: the picked workbook arrives through the inbox.
++        open_async: Some(Box::new(move || {
++            let picks = file_picker::request(file_picker::Kind::Open, "Open \u{2014} Android", workbook_extensions(), None);
++            deliver(open_inbox.clone(), open_ctx.clone(), picks, open_notices.clone());
++        })),
++        // Insert ▸ Pictures: its own inbox, so a cancelled pick cannot land in a later dialog.
++        pick_picture_async: Some(Box::new(move |inbox: Inbox| {
++            let picks = file_picker::request(file_picker::Kind::Open, "Insert Picture \u{2014} Android", picture_extensions(), None);
++            deliver(inbox, picture_ctx.clone(), picks, picture_notices.clone());
++        })),
++        // File ▸ Save As, and every Backstage export: ask where, then write the bytes there.
++        download: Some(Box::new(move |name: &str, bytes: &[u8]| {
++            let picks = file_picker::request(file_picker::Kind::Save, "Save As \u{2014} Android", None, Some(name.to_string()));
++            save(save_ctx.clone(), picks, bytes.to_vec(), save_notices.clone());
++        })),
++        inbox: Some(inbox),
++        // The ribbon and menu Paste read the clipboard through this; the keyboard shortcut
++        // arrives as `Event::Paste` instead (see `clipboard`).
++        paste_text: Some(Box::new(clipboard::text)),
++        ..Default::default()
++    }
++}
++
++
++/// The picker answers with paths; a save seam speaks of one path, or nothing.
++///
++/// One short-lived thread per dialog, which is the shape the desktop shell has too: it waits for
++/// `rfd`'s future off the UI thread while the frame carries on, and this waits for the picker's
++/// answer the same way. A path-less answer is a cancellation, which is what the app reads it as.
++fn path_answer(picks: Receiver<Vec<PathBuf>>) -> Receiver<Option<String>> {
++    let (answer, rx) = std::sync::mpsc::channel();
++    let waiting = std::thread::Builder::new().name("save dialog".into()).spawn(move || {
++        let path = picks.recv().ok().and_then(|paths| paths.into_iter().next()).map(|p| p.to_string_lossy().into_owned());
++        let _ = answer.send(path);
++    });
++    if let Err(e) = waiting {
++        // The dropped sender reads as cancelled, which is the honest outcome.
++        log::error!("couldn't start the save-dialog thread: {e}");
++    }
++    rx
++}
++
++/// A minimal file logger, so a sideloaded APK leaves a readable trace.
++///
++/// `logcat` is only reachable over adb; a file in the app's own data directory can be pulled with
++/// any file manager, which is what a sideloaded build needs.
++struct FileLogger {
++    sink: Mutex<Option<std::fs::File>>,
++}
++
++impl log::Log for FileLogger {
++    fn enabled(&self, _: &log::Metadata) -> bool {
++        true
++    }
++    fn log(&self, record: &log::Record) {
++        if let Ok(mut guard) = self.sink.lock() {
++            if let Some(f) = guard.as_mut() {
++                use std::io::Write;
++                let _ = writeln!(f, "[{}] {} {}", record.level(), record.target(), record.args());
++            }
++        }
++    }
++    fn flush(&self) {}
++}
++
++static LOGGER: OnceLock<FileLogger> = OnceLock::new();
++
++fn init_logging(dir: &Path) {
++    let Ok(file) = std::fs::OpenOptions::new().create(true).append(true).open(dir.join("gridcraft.log")) else {
++        return;
++    };
++    let logger = LOGGER.get_or_init(|| FileLogger { sink: Mutex::new(None) });
++    if let Ok(mut guard) = logger.sink.lock() {
++        *guard = Some(file);
++    }
++    if log::set_logger(logger).is_ok() {
++        log::set_max_level(log::LevelFilter::Info);
++    }
++}
++
++/// The Android entry point.
++///
++/// `android-activity` spawns a dedicated thread for this and calls it with the activity handle.
++/// `#[unsafe(no_mangle)]` with the Rust ABI is the required shape (edition 2024 requires the
++/// `unsafe(..)` wrapper around `no_mangle`), and it is the symbol the injected NativeActivity
++/// looks for.
++#[cfg(target_os = "android")]
++#[unsafe(no_mangle)]
++pub fn android_main(app: winit::platform::android::activity::AndroidApp) {
++    // Count this window while its loop runs (see `prefs_watch`).
++    let _window = prefs_watch::counted_window();
++    let data_dir = app.internal_data_path().unwrap_or_else(|| PathBuf::from("."));
++    let _ = std::fs::create_dir_all(&data_dir);
++    let _ = DATA_DIR.set(data_dir.clone());
++    // The system clipboard goes through the same Activity handle as the rest of the
++    // platform (see `clipboard`).
++    clipboard::install(&app);
++    intents::install(&app);
++    init_logging(&data_dir);
++    log::info!("GridCraft {} starting on Android; data dir {}", env!("CARGO_PKG_VERSION"), data_dir.display());
++    // The app's external files directory: always readable and writable with no permission, so the
++    // picker offers it as a root and Save suggests it first (see `file_picker`).
++    if let Some(ext) = app.external_data_path() {
++        let _ = std::fs::create_dir_all(&ext);
++        let _ = file_picker::EXT_DIR.set(ext);
++    }
++    // Fonts: a folder the user can drop a font file into over USB, pointed at where this app's font
++    // scan looks (see `file_picker::register_fonts`).
++    file_picker::register_fonts();
++
++    let options = eframe::NativeOptions {
++        viewport: egui::ViewportBuilder::default().with_title("GridCraft").with_app_id("ai.storyteller.gridcraft"),
++        // Required on Android: eframe hands this to
++        // `EventLoopBuilderExtAndroid::with_android_app` and errors without it.
++        android_app: Some(app),
++        ..Default::default()
++    };
++
++    let result = eframe::run_native(
++        "GridCraft",
++        options,
++        Box::new(|cc| {
++            let notices: Notices = Notices::default();
++            let mut app = SheetApp::new(Session::new(), android_services(cc.egui_ctx.clone(), notices.clone()));
++            load_prefs(&mut app);
++            if let Some(rs) = &cc.wgpu_render_state {
++                let info = rs.adapter.get_info();
++                log::info!("wgpu adapter: {info:?}");
++            } else {
++                log::warn!("no wgpu render state");
++            }
++            let (ui_path, engine_path) = prefs_files();
++            Ok(Box::new(Shell {
++                inner: app,
++                notices,
++                modifiers: modifiers::Tracked::default(),
++                touch: touch_scroll::TouchScroll::default(),
++                prefs_ui: prefs_watch::Writer::new(ui_path, PREFS_EVERY),
++                prefs_engine: prefs_watch::Writer::new(engine_path, PREFS_EVERY),
++                pending_launch: intents::launch(),
++            }))
++        }),
++    );
++
++    match result {
++        Ok(()) => log::info!("GridCraft exited normally"),
++        Err(e) => log::error!("GridCraft stopped: {e}"),
++    }
++}
++
++/// Wraps the real app so the platform can act on the frame around it: the picker, and the reports
++/// of work that failed off the frame.
++///
++/// The same shape as the desktop shell (`apps/gridcraft/src/main.rs`) and the web build:
++/// `SheetApp` stays untouched and the platform-specific layer hangs off the outside. Every method
++/// is forwarded, so the app sees no difference.
++struct Shell {
++    inner: SheetApp,
++    notices: Notices,
++    /// Modifier keys, tracked here because the platform never reports them: winit's Android
++    /// backend sends no `ModifiersChanged` at all, which is why Shift+click and every Ctrl
++    /// shortcut are dead without this (see `modifiers`).
++    modifiers: modifiers::Tracked,
++    /// Two-finger scrolling, translated from touches into wheel events (see [`touch_scroll`]).
++    touch: touch_scroll::TouchScroll,
++    /// The preferences, written as the app runs rather than only on the way out: Android never
++    /// gives that ending, so a swipe from Recents would otherwise take every preference with it
++    /// (see [`prefs_watch`]). One writer per file, because they are two files.
++    prefs_ui: prefs_watch::Writer,
++    prefs_engine: prefs_watch::Writer,
++    pending_launch: Option<intents::LaunchIntent>,
++}
++
++impl Shell {
++    /// Anything the picker's threads could not do, said out loud. Taking them one at a time means
++    /// a repeated failure cannot pile up an unbounded list.
++    fn show_notices(&mut self, ctx: &egui::Context) {
++        let mut pending = self.notices.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
++        let Some(text) = pending.pop() else {
++            return;
++        };
++        if !pending.is_empty() {
++            pending.truncate(1);
++        }
++        drop(pending);
++        egui::Window::new("GridCraft").collapsible(false).resizable(false).anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0)).show(ctx, |ui| {
++            ui.spacing_mut().button_padding = egui::vec2(10.0, 8.0);
++            ui.label(text);
++            if ui.button("OK").clicked() {
++                *self.notices.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = Vec::new();
++            }
++        });
++    }
++}
++
++impl eframe::App for Shell {
++    fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
++        if let Some(launch) = self.pending_launch.take() {
++            match launch {
++                intents::LaunchIntent::OpenFile(path) => { self.inner.open_path(path.to_string_lossy().as_ref()); }
++                intents::LaunchIntent::ImportText(text) => {
++                    let path = std::env::temp_dir().join("shared.txt");
++                    if std::fs::write(&path, text).is_ok() { self.inner.open_path(path.to_string_lossy().as_ref()); }
++                }
++            }
++        }
++        self.inner.logic(ctx);
++        save_prefs_if_due(&self.inner, &mut self.prefs_ui, &mut self.prefs_engine);
++    }
++
++    fn raw_input_hook(&mut self, ctx: &egui::Context, raw: &mut egui::RawInput) {
++        for event in &mut raw.events {
++            if let egui::Event::Key { key, .. } = event
++                && *key == egui::Key::BrowserBack
++            {
++                *key = egui::Key::Escape;
++            }
++        }
++        // Before the app, so the frame it sees already has the modifiers a desktop backend would
++        // have reported (see `modifiers`).
++        let modifiers = self.modifiers.apply(raw);
++        // Then the touches: winit's Android backend has no mouse and so sends no wheel events at
++        // all, which is why nothing scrolled. A two-finger drag becomes one here (see
++        // `touch_scroll`).
++        self.touch.apply(raw, modifiers);
++        let lost_focus = raw.viewports.values().any(|v| v.focused == Some(false));
++        if lost_focus {
++            let (ui_bytes, engine_bytes) = (prefs_ui_bytes(&self.inner), prefs_engine_bytes(&self.inner));
++            self.prefs_ui.store_now(&ui_bytes);
++            self.prefs_engine.store_now(&engine_bytes);
++        }
++        // Then the clipboard keys: egui-winit could not turn them into Copy/Cut/Paste
++        // because the backend never reports Modifiers, so they are still ordinary key
++        // presses here (see `clipboard::shortcuts`).
++        clipboard::shortcuts(raw);
++        self.inner.raw_input_hook(ctx, raw);
++    }
++
++    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
++        self.inner.ui(ui);
++        // After the app, so the picker and the report float above the grid.
++        file_picker::draw(ui.ctx());
++        // After the app: this is the one place that sees egui's CopyText before egui-winit
++        // consumes it, and puts it on the system clipboard (see `clipboard::publish`).
++        clipboard::publish(ui.ctx());
++        self.show_notices(ui.ctx());
++    }
++
++    fn on_exit(&mut self) {
++        let (ui_bytes, engine_bytes) = (prefs_ui_bytes(&self.inner), prefs_engine_bytes(&self.inner));
++        self.prefs_ui.store_now(&ui_bytes);
++        self.prefs_engine.store_now(&engine_bytes);
++    }
++}
+diff --git a/apps/gridcraft-android/src/modifiers.rs b/apps/gridcraft-android/src/modifiers.rs
+new file mode 100644
+index 00000000..1579da67
+--- /dev/null
++++ b/apps/gridcraft-android/src/modifiers.rs
+@@ -0,0 +1,202 @@
++//! Modifier keys, tracked by the shell because the platform never reports them.
++//!
++//! # The gap
++//!
++//! winit 0.30.13's Android backend emits exactly six window events — `Focused`, `Resized`,
++//! `ScaleFactorChanged`, `RedrawRequested`, `Touch` and `KeyboardInput`
++//! (`src/platform_impl/android/mod.rs`) — and **never** `WindowEvent::ModifiersChanged`. egui-winit
++//! updates its modifier state from that one event and nowhere else, and egui 0.36 carries
++//! modifiers as an *event* (`RawInput` has no `modifiers` field any more), so on Android
++//! `ctx.input(|i| i.modifiers)` is the all-false default for the whole run:
++//!
++//! - Shift+click selects a single cell instead of extending the selection,
++//! - Ctrl+C / Ctrl+V / Ctrl+S and every other modifier shortcut does nothing,
++//! - Alt keytips never come up.
++//!
++//! The *key events themselves* do arrive, so the modifiers can be tracked from them — which is what
++//! a desktop backend does internally. This module does that and reports the state the way egui
++//! expects: `Event::ModifiersChanged` (egui's `InputState` reads modifiers from that event alone)
++//! plus the per-event `modifiers` copies that `Event::Key` and `Event::PointerButton` carry.
++//!
++//! Call [`Tracked::apply`] from the shell's `eframe::App::raw_input_hook`, *before* forwarding to
++//! the app's own hook, so the app sees the same frames it would on the desktop.
++//!
++//! # What it does not do
++//!
++//! The Super/Windows key is deliberately not tracked: on Windows and Linux egui's `command`
++//! modifier is Ctrl and `mac_cmd` is documented as macOS-only, so there is no modifier here for it
++//! to become. Alt is tracked and reported — it is what opens keytips — but egui's own note that
++//! Alt+Shift is how macOS types special characters does not apply on Android.
++
++/// The three modifiers that mean something on this platform, held between frames.
++///
++/// Between frames because the key press and the click are usually in *different* frames: the user
++/// holds Shift down, and only then taps a cell.
++#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
++pub struct Tracked {
++    alt: bool,
++    ctrl: bool,
++    shift: bool,
++}
++
++/// A modifier a key event is about.
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++enum Modifier {
++    Alt,
++    Ctrl,
++    Shift,
++}
++
++/// Which modifier a key event is *about*, from its logical or its physical key.
++///
++/// Both have to be consulted, and on Android it is the physical one that matters: winit's
++/// logical-key table names `Shift` and `Alt` but **not** `Control` (see
++/// `platform_impl/android/keycodes.rs::to_logical`), so a Ctrl press arrives with an unidentified
++/// logical key and only its `physical_key` — which maps `CtrlLeft`/`CtrlRight` to
++/// `ControlLeft`/`ControlRight` — says what it was. That asymmetry is precisely what a user sees:
++/// Shift+click and Shift+arrow work, Ctrl+anything does nothing.
++fn modifier(key: &egui::Key, physical_key: &Option<egui::Key>) -> Option<Modifier> {
++    for k in std::iter::once(key).chain(physical_key.iter()) {
++        match k {
++            egui::Key::ShiftLeft | egui::Key::ShiftRight => return Some(Modifier::Shift),
++            egui::Key::ControlLeft | egui::Key::ControlRight => return Some(Modifier::Ctrl),
++            egui::Key::AltLeft | egui::Key::AltRight => return Some(Modifier::Alt),
++            _ => {}
++        }
++    }
++    None
++}
++
++impl Tracked {
++    /// Fold this frame's events into the tracked state and report it back into them.
++    ///
++    /// Returns the state as `egui::Modifiers`, for the caller that needs to put it on an event of
++    /// its own — the shell's touch-to-wheel bridge does (Ctrl+wheel zooms).
++    pub fn apply(&mut self, raw: &mut egui::RawInput) -> egui::Modifiers {
++        let events = std::mem::take(&mut raw.events);
++        let mut out = Vec::with_capacity(events.len() + 1);
++        for mut event in events {
++            self.observe(&event);
++            // Every event that carries a copy gets the state as it stands at that point in the
++            // batch, so a Shift press and a click in the same frame are ordered correctly.
++            let modifiers = self.reported();
++            match &mut event {
++                egui::Event::Key { modifiers: m, .. } | egui::Event::PointerButton { modifiers: m, .. } => *m = modifiers,
++                _ => {}
++            }
++            out.push(event);
++        }
++        // egui's `InputState` takes modifiers from this event and nowhere else, and a frame with no
++        // key events in it — the vast majority — still has to report the state it is holding.
++        let reported = self.reported();
++        out.push(egui::Event::ModifiersChanged(reported));
++        raw.events = out;
++        reported
++    }
++
++    /// The state as egui wants to see it.
++    fn reported(&self) -> egui::Modifiers {
++        // On Windows and Linux the shortcut modifier is Ctrl, and `mac_cmd` must stay off there.
++        egui::Modifiers { alt: self.alt, ctrl: self.ctrl, shift: self.shift, mac_cmd: false, command: self.ctrl }
++    }
++
++    /// Update from one event.
++    fn observe(&mut self, event: &egui::Event) {
++        match event {
++            // A modifier key going down or coming up.
++            egui::Event::Key { key, physical_key, pressed, .. } => match modifier(key, physical_key) {
++                Some(Modifier::Shift) => self.shift = *pressed,
++                Some(Modifier::Ctrl) => self.ctrl = *pressed,
++                Some(Modifier::Alt) => self.alt = *pressed,
++                None => {}
++            },
++            // The platform reported them itself. It never does on Android, but egui-winit
++            // synthesises one when the window loses focus, and that report is authoritative: it is
++            // how a modifier that was held while the app went to the background stops being stuck.
++            egui::Event::ModifiersChanged(reported) => {
++                self.shift = reported.shift;
++                self.ctrl = reported.ctrl;
++                self.alt = reported.alt;
++            }
++            _ => {}
++        }
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use egui::{Event, Key, Modifiers};
++
++    fn key(k: Key, physical: Option<Key>, pressed: bool) -> Event {
++        Event::Key { key: k, physical_key: physical, pressed, repeat: false, modifiers: Modifiers::default() }
++    }
++
++    fn run(t: &mut Tracked, events: Vec<Event>) -> egui::RawInput {
++        let mut raw = egui::RawInput { events, ..Default::default() };
++        t.apply(&mut raw);
++        raw
++    }
++
++    /// What the frame reports: egui reads modifiers from `ModifiersChanged` and nowhere else, so every
++    /// frame must end with one.
++    fn reported(raw: &egui::RawInput) -> Modifiers {
++        match raw.events.last() {
++            Some(Event::ModifiersChanged(m)) => *m,
++            other => panic!("a frame must end with ModifiersChanged: {other:?}"),
++        }
++    }
++
++    /// The bug this module exists for, in the form Android reports it: winit's logical-key table does
++    /// not name the Control keys, so when the physical key is the only one that identifies them the
++    /// event must still be understood. Tracking only the logical key is what left every Ctrl shortcut
++    /// dead while Shift worked.
++    #[test]
++    fn ctrl_is_understood_from_either_the_logical_or_the_physical_key() {
++        assert_eq!(modifier(&Key::ControlLeft, &None), Some(Modifier::Ctrl));
++        assert_eq!(modifier(&Key::ControlRight, &None), Some(Modifier::Ctrl));
++        // The case that matters: the *logical* key says nothing useful (here: an ordinary A) and the
++        // physical key is what identifies the modifier.
++        assert_eq!(modifier(&Key::A, &Some(Key::ControlLeft)), Some(Modifier::Ctrl));
++        assert_eq!(modifier(&Key::ShiftLeft, &None), Some(Modifier::Shift));
++        assert_eq!(modifier(&Key::A, &Some(Key::A)), None, "an ordinary key is not a modifier");
++    }
++
++    /// Tracked and released through `apply`, and the state persists across frames with no events
++    /// (which is most frames — the key press and the shortcut it enables are usually in different ones).
++    #[test]
++    fn a_held_modifier_is_reported_in_frames_with_no_events() {
++        let mut t = Tracked::default();
++        let m = reported(&run(&mut t, vec![key(Key::ControlLeft, Some(Key::ControlLeft), true)]));
++        assert!(m.ctrl && m.command, "Ctrl is egui's command modifier: {m:?}");
++        assert!(!m.mac_cmd && !m.shift && !m.alt);
++        let quiet = run(&mut t, vec![]);
++        assert!(reported(&quiet).ctrl, "a frame with no events still reports what is held");
++        assert_eq!(quiet.events.len(), 1, "and its only event is that report");
++        let released = reported(&run(&mut t, vec![key(Key::ControlLeft, Some(Key::ControlLeft), false)]));
++        assert!(!released.ctrl, "released");
++    }
++
++    /// Order inside one batch: a press applies to the events after it, not before it.
++    #[test]
++    fn the_state_is_the_one_at_that_point_in_the_batch() {
++        let click = |pressed: bool| Event::PointerButton {
++            pos: egui::pos2(10.0, 10.0),
++            button: egui::PointerButton::Primary,
++            pressed,
++            modifiers: Modifiers::default(),
++        };
++        let mut t = Tracked::default();
++        let mut raw = egui::RawInput {
++            events: vec![click(true), key(Key::ShiftLeft, None, true), click(true)],
++            ..Default::default()
++        };
++        t.apply(&mut raw);
++        let carried = |e: &Event| match e {
++            Event::PointerButton { modifiers, .. } => *modifiers,
++            other => panic!("no modifiers on {other:?}"),
++        };
++        assert!(!carried(&raw.events[0]).shift, "the first click came before the press");
++        assert!(carried(&raw.events[2]).shift, "the second came after it");
++    }
++}
+diff --git a/apps/gridcraft-android/src/prefs_watch.rs b/apps/gridcraft-android/src/prefs_watch.rs
+new file mode 100644
+index 00000000..e8bf1eeb
+--- /dev/null
++++ b/apps/gridcraft-android/src/prefs_watch.rs
+@@ -0,0 +1,141 @@
++//! Writing the preferences while the app runs, not only on the way out.
++//!
++//! # Why this exists
++//!
++//! The desktop shells write their `ui.json` (and `prefs.json`) from `eframe::App::on_exit`, which
++//! eframe calls when the event loop ends. **Android never gives that ending.** An app is swiped
++//! away from Recents and the process is killed where it stands; a low-memory kill looks the same;
++//! and winit's Android backend does not even forward the activity's `onDestroy` (its
++//! `src/platform_impl/android/mod.rs` logs `TODO: forward onDestroy notification to application`
++//! and carries on). So everything the app keeps between runs died with it: the recent-documents
++//! list, the theme, the interface size, the language, the ribbon state — which a user sees as
++//! "it forgot the file I just saved".
++//!
++//! So the preferences are written as the app runs: when the serialised state *differs* from what
++//! was last written, and at most every [`Self::every`]. Comparing first means an idle app writes
++//! nothing at all, and a change is on disk within the interval.
++//!
++//! # Why the write is atomic
++//!
++//! A second window of the same app (see the shell's new-window path — a second `android_main` in
++//! the same process) writes *the same file*. A plain `fs::write` from two threads can interleave
++//! into a half-written `ui.json`, and a half-written preferences file is every preference lost at
++//! once. So each write goes to its own temporary name and is renamed into place, which is atomic
++//! on the same filesystem: a reader sees either the old file or the new one.
++//!
++//! The same file means the same *content* rules as the desktop, which also has many windows
++//! sharing one `ui.json`: the last writer wins. Nothing is corrupted, but two windows do not merge
++//! their recent lists.
++
++use std::io::Write as _;
++use std::path::{Path, PathBuf};
++use std::sync::atomic::{AtomicUsize, Ordering};
++use std::time::{Duration, Instant};
++
++/// The preferences file, how often to look at it, and what was written last.
++pub struct Writer {
++    path: Option<PathBuf>,
++    every: Duration,
++    due_at: Instant,
++    last: Vec<u8>,
++}
++
++impl Writer {
++    /// `every` is how often the state is looked at; a quick look costs a comparison, and a change
++    /// is written as soon as one is due.
++    pub fn new(path: Option<PathBuf>, every: Duration) -> Self {
++        Writer { path, every, due_at: Instant::now() + every, last: Vec::new() }
++    }
++
++    /// Whether it is time to look, and there is somewhere to write.
++    pub fn due(&mut self) -> bool {
++        if self.path.is_none() {
++            return false;
++        }
++        let now = Instant::now();
++        if now < self.due_at {
++            return false;
++        }
++        self.due_at = now + self.every;
++        true
++    }
++
++    /// Write `bytes` if they are not what was last written. Called with what [`Self::due`] asked
++    /// for, or with anything else at any time.
++    pub fn store(&mut self, bytes: &[u8]) {
++        if bytes.is_empty() || bytes == self.last {
++            return;
++        }
++        let Some(path) = self.path.as_ref() else {
++            return;
++        };
++        match write_atomic(path, bytes) {
++            Ok(()) => self.last = bytes.to_vec(),
++            Err(e) => log::warn!("couldn't write the preferences: {e}"),
++        }
++    }
++
++    /// Write now, whatever was written last — for the paths that are not coming back: a quit, and
++    /// `on_exit` if the host ever calls it.
++    pub fn store_now(&mut self, bytes: &[u8]) {
++        self.last.clear();
++        self.store(bytes);
++    }
++}
++
++/// How many windows of this app are running in this process.
++///
++/// Not every shell has a quit path to ask (`GridCraft` ends its process directly), so this is
++/// allowed to go uncalled there rather than being cfg'd per app.
++///
++/// A second window is a second `android_main` on its own thread (a second Activity), so this
++/// counts loops rather than apps: the shell registers one at the start and drops it when its loop
++/// ends. It is what tells a window whether ending it should end the *process* (the last window) or
++/// just itself.
++static WINDOWS: AtomicUsize = AtomicUsize::new(0);
++
++/// The number of windows this process has running, including the calling one.
++///
++/// Not every shell has a quit path to ask (`GridCraft` ends its process directly), so this is
++/// allowed to go uncalled there.
++#[allow(dead_code)]
++pub fn windows() -> usize {
++    WINDOWS.load(Ordering::Relaxed)
++}
++
++/// Count a window: the returned guard *is* the registration, and dropping it (when `android_main`
++/// returns) uncounts it.
++pub fn counted_window() -> Window {
++    WINDOWS.fetch_add(1, Ordering::Relaxed);
++    Window
++}
++
++/// One running window; see [`counted_window`].
++pub struct Window;
++
++impl Drop for Window {
++    fn drop(&mut self) {
++        WINDOWS.fetch_sub(1, Ordering::Relaxed);
++    }
++}
++
++/// Write `bytes` to `path` through a temporary file of its own, then rename it into place.
++///
++/// The unique name is the process id plus a counter: two windows are two threads of one process,
++/// so a name based on either alone would collide.
++fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
++    static N: AtomicUsize = AtomicUsize::new(0);
++    let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "prefs".into());
++    let tmp = path.with_file_name(format!(".{name}.{}-{}.tmp", std::process::id(), N.fetch_add(1, Ordering::Relaxed)));
++    let mut file = std::fs::File::create(&tmp)?;
++    file.write_all(bytes)?;
++    file.sync_all().ok();
++    drop(file);
++    match std::fs::rename(&tmp, path) {
++        Ok(()) => Ok(()),
++        Err(e) => {
++            let _ = std::fs::remove_file(&tmp);
++            Err(e)
++        }
++    }
++}
+diff --git a/apps/gridcraft-android/src/touch_scroll.rs b/apps/gridcraft-android/src/touch_scroll.rs
+new file mode 100644
+index 00000000..8fc3b8ab
+--- /dev/null
++++ b/apps/gridcraft-android/src/touch_scroll.rs
+@@ -0,0 +1,233 @@
++//! Two-finger scrolling for the shell: the platform sends touches, the apps want a wheel.
++//!
++//! # The gap
++//!
++//! Every app in this suite scrolls from `egui::Event::MouseWheel`. WordCraft's `scroll.rs` is
++//! explicit about what it expects — pixel deltas move the page 1:1, `TouchPhase::End` on the last
++//! event is the "fingers lifted" signal that starts the kinetic coast — and it is written for a
++//! *touch* device: it handles phases, synthesises momentum where the platform does not, and takes
++//! wheel notches as three lines. None of that ever runs on Android, because winit's Android backend
++//! has no mouse and therefore emits no wheel events at all (`src/platform_impl/android/mod.rs` sends
++//! six window events and a wheel is not one of them). Touch arrives as `WindowEvent::Touch`, which
++//! egui-winit forwards as `egui::Event::Touch` *and* turns into an emulated mouse pointer — so a
++//! finger drags a selection, and the page never moves. Exactly the complaint a tablet user makes.
++//!
++//! # What this does
++//!
++//! Turns a **two-finger drag** into wheel events and leaves one finger alone:
++//!
++//! - one finger: untouched, so dragging still selects text — the emulated pointer works as before;
++//! - two or more fingers: the centroid's movement becomes `Event::MouseWheel` with
++//!   `MouseWheelUnit::Point` and `TouchPhase::Move`, and a final `TouchPhase::End` event when the
++//!   fingers lift, which is what makes the apps coast to a stop;
++//! - while a two-finger gesture is live the emulated **pointer button** events are dropped, or the
++//!   first finger would drag a selection across the page at the same time as it scrolled. The
++//!   pointer *position* events are kept: the apps only scroll while the pointer is over the canvas.
++//!
++//! The touch events themselves are left in the batch — egui's pinch handling (`zoom_delta`) reads
++//! them and the apps zoom with it, so a pinch keeps working and a two-finger *pan* moves nothing but
++//! the page.
++//!
++//! Two fingers is the convention a tablet user already knows from every document viewer, and it
++//! needs nothing from inside the apps: as far as their scroll code is concerned, a touchpad moved.
++//!
++//! Call [`TouchScroll::apply`] from the shell's `eframe::App::raw_input_hook`, after the modifier
++//! tracking, whose reported state the wheel event has to carry (Ctrl+wheel zooms).
++
++use std::collections::HashMap;
++
++/// Touch state between frames: where each finger is (a scroll is a *change* of position and a batch
++/// only carries the new one), and how far the last scroll was measured from.
++#[derive(Debug, Default)]
++pub struct TouchScroll {
++    /// Keyed by the raw id: `egui::TouchId` is a `u64` newtype with no `Hash`,
++    /// so it cannot be a map key itself.
++    fingers: HashMap<u64, egui::Pos2>,
++    /// The centroid the last scroll was measured from. `None` outside a gesture, so the moment a
++    /// second finger lands — which moves the centroid by half the gap between the fingers — is not
++    /// itself a scroll.
++    last: Option<egui::Pos2>,
++    /// A two-finger gesture has scrolled and has not ended: the apps are coasting on the last
++    /// `TouchPhase::End` and must be told when this one finishes.
++    scrolling: bool,
++}
++
++impl TouchScroll {
++    /// Rewrite one frame's events so the apps can scroll from them.
++    ///
++    /// `modifiers` is the shell's tracked state, because egui reads the zoom modifier from the event
++    /// itself (and the platform never reports modifiers — see `modifiers.rs`).
++    pub fn apply(&mut self, raw: &mut egui::RawInput, modifiers: egui::Modifiers) {
++        let events = std::mem::take(&mut raw.events);
++
++        // First the finger bookkeeping, over the whole batch: the events of one frame arrive in
++        // order, and the delta wanted is between this frame's centroid and the last one.
++        for event in &events {
++            if let egui::Event::Touch { id, phase, pos, .. } = event {
++                match phase {
++                    egui::TouchPhase::Start | egui::TouchPhase::Move => {
++                        self.fingers.insert(id.0, *pos);
++                    }
++                    egui::TouchPhase::End | egui::TouchPhase::Cancel => {
++                        self.fingers.remove(&id.0);
++                    }
++                }
++            }
++        }
++
++        let centroid = self.centroid();
++        let gesture = self.fingers.len() >= 2;
++        // Positive is "the content moves down/right", which is what egui documents and what a finger
++        // dragged down the screen means.
++        let delta = match (gesture, centroid, self.last) {
++            (true, Some(now), Some(prev)) => now - prev,
++            _ => egui::Vec2::ZERO,
++        };
++
++        let mut out = Vec::with_capacity(events.len() + 1);
++        for event in events {
++            if gesture && matches!(event, egui::Event::PointerButton { .. }) {
++                continue;
++            }
++            out.push(event);
++        }
++
++        if gesture && delta != egui::Vec2::ZERO {
++            self.scrolling = true;
++            out.push(egui::Event::MouseWheel {
++                unit: egui::MouseWheelUnit::Point,
++                delta,
++                phase: egui::TouchPhase::Move,
++                modifiers,
++                source: egui::MouseWheelSource::Unknown,
++            });
++        } else if self.scrolling && !gesture {
++            // The fingers lifted. The apps' momentum code coasts from this, and a flick that was
++            // fast enough keeps the page moving after the hand is off it.
++            self.scrolling = false;
++            out.push(egui::Event::MouseWheel {
++                unit: egui::MouseWheelUnit::Point,
++                delta: egui::Vec2::ZERO,
++                phase: egui::TouchPhase::End,
++                modifiers,
++                source: egui::MouseWheelSource::Unknown,
++            });
++        }
++
++        self.last = if gesture { centroid } else { None };
++        raw.events = out;
++    }
++
++    /// Where the fingers are, on average. `None` with none down.
++    fn centroid(&self) -> Option<egui::Pos2> {
++        let n = self.fingers.len();
++        if n == 0 {
++            return None;
++        }
++        let sum = self.fingers.values().fold(egui::Vec2::ZERO, |a, p| a + p.to_vec2());
++        Some((sum / n as f32).to_pos2())
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    fn touch(id: u64, phase: egui::TouchPhase, x: f32, y: f32) -> egui::Event {
++        egui::Event::Touch {
++            device_id: egui::TouchDeviceId(0),
++            id: egui::TouchId::from(id),
++            phase,
++            pos: egui::pos2(x, y),
++            force: None,
++        }
++    }
++
++    fn moved(x: f32, y: f32) -> egui::Event {
++        egui::Event::PointerMoved(egui::pos2(x, y))
++    }
++
++    fn press(x: f32, y: f32) -> egui::Event {
++        egui::Event::PointerButton { pos: egui::pos2(x, y), button: egui::PointerButton::Primary, pressed: true, modifiers: Default::default() }
++    }
++
++    fn wheels(raw: &egui::RawInput) -> Vec<(egui::Vec2, egui::TouchPhase)> {
++        raw.events
++            .iter()
++            .filter_map(|e| match e {
++                egui::Event::MouseWheel { delta, phase, .. } => Some((*delta, *phase)),
++                _ => None,
++            })
++            .collect()
++    }
++
++    fn batch(events: Vec<egui::Event>) -> egui::RawInput {
++        egui::RawInput { events, ..Default::default() }
++    }
++
++    #[test]
++    fn one_finger_still_selects_and_never_scrolls() {
++        let mut s = TouchScroll::default();
++        let mut raw = batch(vec![touch(1, egui::TouchPhase::Start, 100.0, 100.0), moved(100.0, 100.0), press(100.0, 100.0)]);
++        s.apply(&mut raw, Default::default());
++        assert!(
++            raw.events.iter().any(|e| matches!(e, egui::Event::PointerButton { pressed: true, .. })),
++            "one finger keeps its press: that is how a tablet drags a selection"
++        );
++        let mut raw = batch(vec![touch(1, egui::TouchPhase::Move, 140.0, 220.0), moved(140.0, 220.0)]);
++        s.apply(&mut raw, Default::default());
++        assert!(wheels(&raw).is_empty(), "one finger does not scroll");
++        assert!(raw.events.iter().any(|e| matches!(e, egui::Event::PointerMoved(_))), "and the drag reaches the app as a pointer drag");
++    }
++
++    #[test]
++    fn two_fingers_scroll_and_the_press_is_dropped() {
++        let mut s = TouchScroll::default();
++        // Finger one lands (the emulated press is what selects on a tablet).
++        let mut raw = batch(vec![touch(1, egui::TouchPhase::Start, 100.0, 100.0), press(100.0, 100.0)]);
++        s.apply(&mut raw, Default::default());
++        // Finger two lands: no scroll yet — the centroid jumped, but nothing has moved.
++        let mut raw = batch(vec![touch(2, egui::TouchPhase::Start, 200.0, 100.0)]);
++        s.apply(&mut raw, Default::default());
++        assert!(wheels(&raw).is_empty(), "a second finger landing is not a scroll");
++        // Both drag down 30 points: the page moves down 30, and no press comes with it.
++        let mut raw = batch(vec![
++            touch(1, egui::TouchPhase::Move, 100.0, 130.0),
++            touch(2, egui::TouchPhase::Move, 200.0, 130.0),
++            moved(100.0, 130.0),
++            press(100.0, 130.0),
++        ]);
++        s.apply(&mut raw, Default::default());
++        let w = wheels(&raw);
++        assert_eq!(w.len(), 1, "one wheel event per frame");
++        assert!((w[0].0.y - 30.0).abs() < 1e-3, "the content follows the fingers: {:?}", w[0].0);
++        assert_eq!(w[0].1, egui::TouchPhase::Move);
++        assert!(!raw.events.iter().any(|e| matches!(e, egui::Event::PointerButton { .. })), "no selection drag while scrolling");
++        assert!(raw.events.iter().any(|e| matches!(e, egui::Event::PointerMoved(_))), "the pointer position stays: the apps only scroll while the pointer is over the canvas");
++        // Both lift: the release the apps coast from.
++        let mut raw = batch(vec![
++            touch(1, egui::TouchPhase::End, 100.0, 130.0),
++            touch(2, egui::TouchPhase::End, 200.0, 130.0),
++        ]);
++        s.apply(&mut raw, Default::default());
++        let w = wheels(&raw);
++        assert_eq!(w.len(), 1, "the fingers lifting is reported");
++        assert_eq!(w[0].1, egui::TouchPhase::End);
++        assert_eq!(w[0].0, egui::Vec2::ZERO, "a lift carries no distance of its own");
++        // And the next frame is quiet: one release, not one per frame.
++        let mut raw = batch(vec![touch(1, egui::TouchPhase::Start, 100.0, 100.0)]);
++        s.apply(&mut raw, Default::default());
++        assert!(wheels(&raw).is_empty());
++    }
++
++    #[test]
++    fn a_pinch_does_not_scroll_the_page() {
++        let mut s = TouchScroll::default();
++        s.apply(&mut batch(vec![touch(1, egui::TouchPhase::Start, 400.0, 400.0), touch(2, egui::TouchPhase::Start, 500.0, 400.0)]), Default::default());
++        // Fingers move apart around a fixed centre: that is egui's zoom_delta, not a scroll.
++        let mut raw = batch(vec![touch(1, egui::TouchPhase::Move, 300.0, 400.0), touch(2, egui::TouchPhase::Move, 600.0, 400.0)]);
++        s.apply(&mut raw, Default::default());
++        assert!(wheels(&raw).is_empty(), "a pinch zooms, it does not scroll: {:?}", wheels(&raw));
++        assert!(raw.events.iter().any(|e| matches!(e, egui::Event::Touch { .. })), "the touch events stay in the batch, egui reads them for zoom");
++    }
++}
 diff --git a/crates/ui-egui/src/app.rs b/crates/ui-egui/src/app.rs
-index 9d190083..e49819c7 100644
+index 94b6b01e..fa00279f 100644
 --- a/crates/ui-egui/src/app.rs
 +++ b/crates/ui-egui/src/app.rs
 @@ -41,6 +41,7 @@ impl SheetApp {
@@ -53,7 +2602,7 @@ index 9d190083..e49819c7 100644
              printing: Default::default(),
              print_feedback_seen: None,
              synthetic: Default::default(),
-@@ -130,6 +131,8 @@ impl SheetApp {
+@@ -132,6 +133,8 @@ impl SheetApp {
          // issues the capture command (after every widget, so a command cannot be missed).
          control::drain_screenshots(self, ctx);
          control::poll(self, ctx);
@@ -62,7 +2611,7 @@ index 9d190083..e49819c7 100644
          // Printing feedback is polled once per frame, here, so hidden windows and logic-only
          // frames still see worker completion. `ui` and the desktop app no longer poll it.
          self.poll_printing(ctx);
-@@ -140,6 +143,18 @@ impl SheetApp {
+@@ -142,6 +145,18 @@ impl SheetApp {
          self.poll_async_opens();
          self.autosave(ctx);
          self.update_title(ctx);
@@ -82,10 +2631,10 @@ index 9d190083..e49819c7 100644
          // One window always shows a workbook, unless each workbook has a native window of its own
          // (`doc_windows` decides what having none left means).
 diff --git a/crates/ui-egui/src/app/commands.rs b/crates/ui-egui/src/app/commands.rs
-index 86a4a6cc..890890c6 100644
+index 2c28bfba..72a22568 100644
 --- a/crates/ui-egui/src/app/commands.rs
 +++ b/crates/ui-egui/src/app/commands.rs
-@@ -366,12 +366,16 @@ impl SheetApp {
+@@ -381,12 +381,16 @@ impl SheetApp {
              }
              "saveAs" => {
                  let suggested = self.session.active().map(|d| d.display_title()).unwrap_or_else(|| "Book1".into());
@@ -156,7 +2705,7 @@ index 194533d3..6f16f584 100644
      if app.services.download.is_none() {
          app.message = Some(("GridCraft".into(), "Exporting needs a file picker, which this window doesn't have.".into()));
 diff --git a/crates/ui-egui/src/dialogs/show.rs b/crates/ui-egui/src/dialogs/show.rs
-index 70ba3fed..97cfb3b1 100644
+index 6dd5519c..72caedce 100644
 --- a/crates/ui-egui/src/dialogs/show.rs
 +++ b/crates/ui-egui/src/dialogs/show.rs
 @@ -312,24 +312,27 @@ pub fn show(app: &mut SheetApp, ctx: &egui::Context) {
@@ -202,7 +2751,7 @@ index 70ba3fed..97cfb3b1 100644
                      }
                  }
 diff --git a/crates/ui-egui/src/lib.rs b/crates/ui-egui/src/lib.rs
-index 95f861f1..a52c3608 100644
+index 470855d7..7f37705d 100644
 --- a/crates/ui-egui/src/lib.rs
 +++ b/crates/ui-egui/src/lib.rs
 @@ -49,6 +49,7 @@ pub mod pivot_pane;
@@ -213,7 +2762,7 @@ index 95f861f1..a52c3608 100644
  pub mod tabs;
  pub mod text_box;
  pub mod theme;
-@@ -219,6 +220,9 @@ pub struct SheetApp {
+@@ -232,6 +233,9 @@ pub struct SheetApp {
      /// Dismissible info bar under the ribbon (open-time notices).
      pub notice: Option<Notice>,
      pub services: Services,
@@ -313,7 +2862,7 @@ index 00000000..e774b9e9
 +    }
 +}
 diff --git a/crates/ui-egui/src/services.rs b/crates/ui-egui/src/services.rs
-index 748e23ab..d2bd2075 100644
+index 20b8da85..fd167d9f 100644
 --- a/crates/ui-egui/src/services.rs
 +++ b/crates/ui-egui/src/services.rs
 @@ -15,6 +15,13 @@ pub struct Services {

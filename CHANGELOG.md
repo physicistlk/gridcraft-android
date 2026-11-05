@@ -1,5 +1,16 @@
 # Changelog
 
+## 2026-11-05 — Re-pinned to upstream 0.16.1
+
+| | |
+|---|---|
+| APK | `gridcraft-0.16.1-arm64-v8a-20261105.apk` — sha256 `3ea831afe07586c125cae540f7c4eeb542802393b69927e5b07775025d9194e3` (built 2026-11-05, locally signed) |
+| Upstream pin | v0.16.1 (upstream `0.16.1`) |
+| Package | `ai.storyteller.gridcraft` — versionName `0.16.1`, versionCode `16781313`, minSdk 26, targetSdk 35 |
+| ABI | `arm64-v8a` only |
+| ELF page alignment | `0x4000` (16 KB) — Android 16 compatible |
+
+
 ## 2026-11-04 — Re-pinned to upstream 0.16.0
 
 | | |
