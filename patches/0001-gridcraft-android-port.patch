@@ -1,14 +1,14 @@
 diff --git a/Cargo.lock b/Cargo.lock
-index 2357dfd1..9ef6f420 100644
+index 6f589847..4c7c9457 100644
 --- a/Cargo.lock
 +++ b/Cargo.lock
-@@ -2036,6 +2036,20 @@ dependencies = [
+@@ -2047,6 +2047,20 @@ dependencies = [
   "winresource",
  ]
  
 +[[package]]
 +name = "gridcraft-android"
-+version = "0.17.0"
++version = "0.18.0"
 +dependencies = [
 + "eframe",
 + "egui",
@@ -22,9 +22,27 @@ index 2357dfd1..9ef6f420 100644
 +
  [[package]]
  name = "gridcraft-calc"
- version = "0.17.0"
+ version = "0.18.0"
+@@ -6425,7 +6439,6 @@ checksum = "589f6da84c646204747d1270a2a5661ea66ed1cced2631d546fdfb155959f9ec"
+ [[package]]
+ name = "winit"
+ version = "0.30.13"
+-source = "git+https://github.com/storytold/winit.git?rev=a517b3846ee8457d84ee4975110bfda6797c44dc#a517b3846ee8457d84ee4975110bfda6797c44dc"
+ dependencies = [
+  "ahash",
+  "android-activity",
+diff --git a/Cargo.toml b/Cargo.toml
+index 6d92c0ca..c014117a 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -113,4 +113,4 @@ egui_system_font_provider = { git = "https://github.com/storytold/egui.git", rev
+ eframe = { git = "https://github.com/storytold/egui.git", rev = "6d518fc799681571963842f95b55a6b68431b15a" }
+ egui_demo_lib = { git = "https://github.com/storytold/egui.git", rev = "6d518fc799681571963842f95b55a6b68431b15a" }
+ egui_inspection = { git = "https://github.com/storytold/egui.git", rev = "6d518fc799681571963842f95b55a6b68431b15a" }
+-winit = { git = "https://github.com/storytold/winit.git", rev = "a517b3846ee8457d84ee4975110bfda6797c44dc" }
++winit = { path = "vendor/winit" }
 diff --git a/crates/ui-egui/src/app.rs b/crates/ui-egui/src/app.rs
-index 94b6b01e..21a870d2 100644
+index 94b6b01e..fa00279f 100644
 --- a/crates/ui-egui/src/app.rs
 +++ b/crates/ui-egui/src/app.rs
 @@ -41,6 +41,7 @@ impl SheetApp {
@@ -35,43 +53,279 @@ index 94b6b01e..21a870d2 100644
              printing: Default::default(),
              print_feedback_seen: None,
              synthetic: Default::default(),
-@@ -106,6 +107,7 @@ impl SheetApp {
-     /// Per-frame logic (control channel, screenshots). Call before `ui`.
-     pub fn logic(&mut self, ctx: &egui::Context) {
-         self.ensure_text_width(ctx);
+@@ -132,6 +133,8 @@ impl SheetApp {
+         // issues the capture command (after every widget, so a command cannot be missed).
+         control::drain_screenshots(self, ctx);
+         control::poll(self, ctx);
++        // A save dialog that answered between frames: what asked runs now, with the path.
 +        self.poll_save();
-         // A keytip control request lives one frame: the ribbon consumes it during `ui`, and
-         // anything that never reached a control (collapsed ribbon, tab switch) is dropped. One
-         // made with a switch to the control's tab waits, with its window, for the next `ui` of
+         // Printing feedback is polled once per frame, here, so hidden windows and logic-only
+         // frames still see worker completion. `ui` and the desktop app no longer poll it.
+         self.poll_printing(ctx);
+@@ -142,6 +145,18 @@ impl SheetApp {
+         self.poll_async_opens();
+         self.autosave(ctx);
+         self.update_title(ctx);
++        // A workbook that now has a file of its own — just saved, or opened — belongs at the top of
++        // the recent list. `after_open` does this for opening, and nothing did it for saving: a
++        // workbook saved with Save As never appeared in Recent, so the only way back to it was to
++        // find it by hand. Only when it is not already first, so the list stays a list of files
++        // rather than of whatever is on screen.
++        if let Some(path) = self.session.active().and_then(|d| d.path.clone())
++            && self.ui.recent.first() != Some(&path)
++        {
++            self.ui.recent.retain(|p| *p != path);
++            self.ui.recent.insert(0, path);
++            self.ui.recent.truncate(20);
++        }
+         self.request_hidden_paint(ctx);
+         // One window always shows a workbook, unless each workbook has a native window of its own
+         // (`doc_windows` decides what having none left means).
+diff --git a/crates/ui-egui/src/app/commands.rs b/crates/ui-egui/src/app/commands.rs
+index 6dff45cb..df3cacae 100644
+--- a/crates/ui-egui/src/app/commands.rs
++++ b/crates/ui-egui/src/app/commands.rs
+@@ -382,12 +382,16 @@ impl SheetApp {
+             }
+             "saveAs" => {
+                 let suggested = self.session.active().map(|d| d.display_title()).unwrap_or_else(|| "Book1".into());
+-                if let Some(pick) = &self.services.pick_save {
+-                    if let Some(path) = pick(&suggested) {
+-                        let path = if std::path::Path::new(&path).extension().is_none() { format!("{path}.xlsx") } else { path };
+-                        self.run_or_alert("file.save", json!({"path": path}));
+-                    }
+-                } else if self.services.download.is_some()
++                // A host with a save dialog gets the path back, so the workbook learns which file it
++                // is: the title bar follows, `file.save` stops asking, and closing stops prompting.
++                // Only a host with neither a blocking nor an asynchronous dialog falls through to
++                // the bytes below, which cannot name what they wrote.
++                let asked = self.ask_save(&suggested, |app, path| {
++                    let path = if std::path::Path::new(path).extension().is_none() { format!("{path}.xlsx") } else { path.to_string() };
++                    app.run_or_alert("file.save", json!({"path": path}));
++                });
++                if !asked
++                    && self.services.download.is_some()
+                     && let Ok(r) = self.run("file.saveBytes", json!({"format": "xlsx"}))
+                     && let Some(dl) = &self.services.download
+                     && let Some(b) = r.get("base64").and_then(Json::as_str).and_then(gridcraft_engine::io::base64_decode)
+diff --git a/crates/ui-egui/src/backstage.rs b/crates/ui-egui/src/backstage.rs
+index 194533d3..6f16f584 100644
+--- a/crates/ui-egui/src/backstage.rs
++++ b/crates/ui-egui/src/backstage.rs
+@@ -695,8 +695,10 @@ fn save_as(app: &mut SheetApp, ui: &mut Ui, bs: &mut Backstage, out: &mut Outcom
+             .labelled_by(label.id);
+     });
+     ui.add_space(14.0);
+-    // Desktop: the system Save dialog. Web: the file downloads.
+-    let web = app.services.pick_save.is_none() && app.services.download.is_some();
++    // Desktop: the system Save dialog. Web, and Android: we have one and the file is written
++    // where it says. Only a host with no save dialog at all downloads, so the button says
++    // what it will actually do.
++    let web = app.services.pick_save.is_none() && app.services.pick_save_async.is_none() && app.services.download.is_some();
+     let label = if web { format!("{} (.{fmt})", lang.tr("Download")) } else { lang.tr("Browse…").to_string() };
+     if square_button(ui, Icon::OpenFolder, &label).clicked() && app.commit_edit(0, 0, false, false) {
+         if fmt == "xlsx" {
+@@ -747,17 +749,19 @@ pub fn export_as(app: &mut SheetApp, fmt: &str) -> bool {
+     };
+     let title = app.session.active().map(|d| d.display_title()).unwrap_or_else(|| "Book1".into());
+     let stem = std::path::Path::new(&title).file_stem().and_then(std::ffi::OsStr::to_str).unwrap_or("Book1").to_string();
+-    if let Some(pick) = &app.services.pick_save {
+-        let Some(path) = pick(&format!("{stem}.{fmt}")) else { return false };
++    // A host with a save dialog is asked for a path and writes on the frame the answer arrives, so
++    // this reports "handed over" rather than "written". The workbook is untouched either way: an
++    // export is a copy, and it must not become the workbook's own file.
++    let fmt_owned = fmt.to_string();
++    let asked = app.ask_save(&format!("{stem}.{fmt}"), move |app, path| {
+         // The picker may suggest a workbook extension; the export writes the chosen format.
+-        let path = std::path::Path::new(&path).with_extension(fmt).to_string_lossy().into_owned();
+-        return match app.run(id, json!({"path": path})) {
+-            Ok(_) => true,
+-            Err(e) => {
+-                app.message = Some(("GridCraft".into(), crate::clean_error(&e)));
+-                false
+-            }
+-        };
++        let path = std::path::Path::new(path).with_extension(&fmt_owned).to_string_lossy().into_owned();
++        if let Err(e) = app.run(id, json!({"path": path})) {
++            app.message = Some(("GridCraft".into(), crate::clean_error(&e)));
++        }
++    });
++    if asked {
++        return true;
+     }
+     if app.services.download.is_none() {
+         app.message = Some(("GridCraft".into(), "Exporting needs a file picker, which this window doesn't have.".into()));
+diff --git a/crates/ui-egui/src/dialogs/show.rs b/crates/ui-egui/src/dialogs/show.rs
+index e4cd5bb2..1b893396 100644
+--- a/crates/ui-egui/src/dialogs/show.rs
++++ b/crates/ui-egui/src/dialogs/show.rs
+@@ -316,24 +316,27 @@ pub fn show(app: &mut SheetApp, ctx: &egui::Context) {
+                     d.values.insert("path".into(), json!(path.clone()));
+                     ok_cancel(ui, &mut confirm, &mut open);
+                     if confirm {
++                        let id = match fmt.as_str() {
++                            "csv" => "file.exportCsv",
++                            "html" => "file.exportHtml",
++                            _ => "file.saveAs",
++                        };
+                         // A bare name has no folder: written as typed it would land in the
+                         // process's working directory (`/` from the Finder, the install folder on
+                         // Windows), never where the user looks. The picker chooses the folder.
+-                        let pick = app.services.pick_save.as_ref();
+-                        let target = if path.is_empty() {
+-                            pick.and_then(|f| f(&format!("Copy.{fmt}")))
+-                        } else if let Some(f) = pick.filter(|_| std::path::Path::new(&path).is_relative()) {
+-                            f(&if path.ends_with(&format!(".{fmt}")) { path } else { format!("{path}.{fmt}") })
+-                        } else {
+-                            Some(path)
+-                        };
+-                        if let Some(t) = target {
+-                            let id = match fmt.as_str() {
+-                                "csv" => "file.exportCsv",
+-                                "html" => "file.exportHtml",
+-                                _ => "file.saveAs",
++                        let needs_folder = path.is_empty() || std::path::Path::new(&path).is_relative();
++                        if needs_folder {
++                            // Ask, and write the copy when the answer arrives.
++                            let suggested = if path.is_empty() {
++                                format!("Copy.{fmt}")
++                            } else if path.ends_with(&format!(".{fmt}")) {
++                                path.clone()
++                            } else {
++                                format!("{path}.{fmt}")
+                             };
+-                            app.run_or_alert(id, json!({"path": t}));
++                            app.ask_save(&suggested, move |app, t| app.run_or_alert(id, json!({"path": t})));
++                        } else {
++                            app.run_or_alert(id, json!({"path": path}));
+                         }
+                     }
+                 }
 diff --git a/crates/ui-egui/src/lib.rs b/crates/ui-egui/src/lib.rs
-index e773a207..e56f1c62 100644
+index dffe3ed8..c9dd18cb 100644
 --- a/crates/ui-egui/src/lib.rs
 +++ b/crates/ui-egui/src/lib.rs
 @@ -51,6 +51,7 @@ pub mod pivot_pane;
  pub mod printing;
  pub mod ribbon;
  pub mod selection_glide;
-+pub mod save_dialogs;
++mod save_dialogs;
  pub mod tabs;
  pub mod text_box;
  pub mod theme;
-@@ -234,6 +235,7 @@ pub struct SheetApp {
+@@ -235,6 +236,9 @@ pub struct SheetApp {
      /// Dismissible info bar under the ribbon (open-time notices).
      pub notice: Option<Notice>,
      pub services: Services,
-+    pub pending_save: Option<crate::save_dialogs::PendingSave>,
++    /// The save dialog the host is showing, and what to do with its answer (see the
++    /// `save_dialogs` module).
++    pending_save: Option<save_dialogs::PendingSave>,
      pub printing: printing::State,
      print_feedback_seen: Option<printing::Feedback>,
      /// Synthetic input from agents, one batch per step (drags need several steps).
+diff --git a/crates/ui-egui/src/save_dialogs.rs b/crates/ui-egui/src/save_dialogs.rs
+new file mode 100644
+index 00000000..e774b9e9
+--- /dev/null
++++ b/crates/ui-egui/src/save_dialogs.rs
+@@ -0,0 +1,83 @@
++//! Save dialogs that don't hold the frame, and what the answer to them is for.
++//!
++//! # Why this exists
++//!
++//! `Services::pick_save` is the blocking shape: the host shows a panel and returns the chosen path
++//! in the same call. That works on the desktop (`rfd`) and cannot work on a host that draws its own
++//! picker between frames — the browser, and Android, where there is no native dialog to call at
++//! all. Those hosts return a receiver instead ([`crate::Services::pick_save_async`]) and the app
++//! does what the blocking call would have done on the frame the path arrives, exactly as
++//! [`crate::dialogs`] and [`crate::backstage`] already do for pictures and opening.
++//!
++//! # The cost of not having it
++//!
++//! Handing the host finished *bytes* instead (the web `download` path) looks equivalent and is not:
++//! the app is never told where the file went, so `DocState::path` stays `None` and the workbook is
++//! still "Book1" with unsaved changes — the title bar never changes, `Ctrl+S` asks for a location
++//! again, and closing prompts to save what was just saved. Every save dialog in this app goes
++//! through [`SheetApp::ask_save`] so that cannot happen.
++
++use std::sync::mpsc::{Receiver, TryRecvError};
++
++use crate::SheetApp;
++
++/// A save dialog the host is showing: the answer arrives on `rx`, and `after` is what the blocking
++/// `pick_save` would have run with it.
++pub(crate) struct PendingSave {
++    rx: Receiver<Option<String>>,
++    after: Box<dyn FnOnce(&mut SheetApp, &str)>,
++}
++
++impl SheetApp {
++    /// Whether a save dialog is open (its answer hasn't arrived yet).
++    pub fn save_dialog_open(&self) -> bool {
++        self.pending_save.is_some()
++    }
++
++    /// Ask for a path to save to, and do `after` with it: straight away for a blocking host dialog,
++    /// on a later frame for an asynchronous one.
++    ///
++    /// Returns false when the host has neither, which is how a caller knows to fall back to its
++    /// browser-download path — and only then, because a host with a picker must never be handed
++    /// bytes it cannot name.
++    pub(crate) fn ask_save(&mut self, suggested: &str, after: impl FnOnce(&mut SheetApp, &str) + 'static) -> bool {
++        // One dialog at a time: the app has one pending action, and while it is waiting the answer
++        // to it decides what happens.
++        if self.pending_save.is_some() {
++            return true;
++        }
++        if let Some(pick) = &self.services.pick_save {
++            if let Some(path) = pick(suggested) {
++                after(self, &path);
++            }
++            return true;
++        }
++        let Some(ask) = &self.services.pick_save_async else {
++            return false;
++        };
++        self.pending_save = Some(PendingSave { rx: ask(suggested), after: Box::new(after) });
++        true
++    }
++
++    /// Use the answer, once there is one. Called every frame from [`SheetApp::logic`].
++    pub(crate) fn poll_save(&mut self) {
++        let Some(pending) = self.pending_save.as_ref() else {
++            return;
++        };
++        match pending.rx.try_recv() {
++            Err(TryRecvError::Empty) => {}
++            Ok(answer) => {
++                let Some(PendingSave { after, .. }) = self.pending_save.take() else {
++                    return;
++                };
++                // Nothing to do with a cancelled dialog, which is what an empty answer is.
++                if let Some(path) = answer {
++                    after(self, &path);
++                }
++            }
++            // The host went away without answering (its sender was dropped): a cancellation, not a
++            // dialog this app will wait on for ever.
++            Err(TryRecvError::Disconnected) => self.pending_save = None,
++        }
++    }
++}
 diff --git a/crates/ui-egui/src/services.rs b/crates/ui-egui/src/services.rs
-index 20b8da85..72a46045 100644
+index 20b8da85..fd167d9f 100644
 --- a/crates/ui-egui/src/services.rs
 +++ b/crates/ui-egui/src/services.rs
-@@ -15,6 +15,8 @@ pub struct Services {
+@@ -15,6 +15,13 @@ pub struct Services {
      pub print_native: Option<printing::Submit>,
      pub pick_open: Option<Box<dyn Fn() -> Option<String>>>,
      pub pick_save: Option<PickSave>,
-+    /// A save dialog whose answer arrives later.
++    /// A save dialog whose answer arrives later: what `pick_save` is for a host that cannot show a
++    /// panel without ending the frame — the browser, and Android, where the picker is drawn with
++    /// egui between frames. The host returns a receiver and the app runs what asked on the frame
++    /// the path arrives (see the `save_dialogs` module); an empty answer is a cancellation. A host
++    /// with this must be preferred over handing it finished bytes, which cannot tell the app where
++    /// they went.
 +    pub pick_save_async: Option<Box<dyn Fn(&str) -> std::sync::mpsc::Receiver<Option<String>>>>,
      /// Native picture picker (PNG/JPEG), separate from workbook opening.
      pub pick_picture: Option<Box<dyn Fn() -> Option<String>>>,

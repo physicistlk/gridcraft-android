@@ -1,5 +1,34 @@
 # Changelog
 
+## 2026-11-09 — Re-pinned to upstream 0.18.0
+
+| | |
+|---|---|
+| APK | `gridcraft-0.18.0-arm64-v8a-20261109.apk` — sha256 `b43d19d3ba19d1a17109bf823928b935332de381a7e1f83e18d054c85ac6c472` (built 2026-11-09, locally signed) |
+| Upstream pin | `17cb3c83d9e73df6a88ed174cec612f1de2e8244` — tag `v0.18.0` (upstream `0.18.0`) |
+| Package | `ai.storyteller.gridcraft` — versionName `0.18.0`, versionCode `16781824`, minSdk 26, targetSdk 35 |
+| ABI | `arm64-v8a` only |
+| ELF page alignment | `0x4000` (16 KB) — Android 16 compatible |
+
+### Changed
+- **The upstream pin moved from 0.17.0 to 0.18.0.** The port patch was re-derived against the
+  `v0.18.0` tree. All hunks applied unchanged; the only edit needed was the `Cargo.lock` entry for
+  the `gridcraft-android` package, whose version follows the workspace (`0.18.0`).
+- **`patches/0001-gridcraft-android-port.patch` carries the whole port again.** The 0.17.0
+  re-port produced the patch with plain `git diff`, which dropped every staged hunk and, because
+  `save_dialogs.rs` was untracked, the module and its wiring as well: the file had shrunk to 78
+  lines and the 0.17.0 tree was missing the Save As path. It is now generated with `git diff HEAD`
+  after an intent-to-add of the new file, and holds all nine files: `Cargo.toml` (vendored
+  winit), `Cargo.lock`, and the seven `crates/ui-egui` files, with `save_dialogs.rs` as the one
+  new file.
+- **Verification:** the patch was checked with `git apply --check` against a pristine
+  `git archive v0.18.0` tree (the port crate and `vendor/winit` copied in as directories), applied,
+  and `diff -r` shows the assembled tree and the built tree are identical. `cargo check -p
+  gridcraft-android --target aarch64-linux-android` passes; the signed APK was verified with
+  `aapt2 dump badging` (`versionName 0.18.0`, `native-code: 'arm64-v8a'`), `apksigner verify`,
+  and `llvm-readelf` (every `LOAD` segment `0x4000`-aligned).
+
+
 ## 2026-11-05 — Re-pinned to upstream 0.16.1
 
 | | |
