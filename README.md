@@ -6,10 +6,10 @@ and egui interface, packaged as a NativeActivity APK for sideloading on arm64 de
 | | |
 |---|---|
 | Upstream project | [`storytold/gridcraft`](https://github.com/storytold/gridcraft) — Apache-2.0 OR MIT |
-| Pinned commit | `17cb3c83d9e73df6a88ed174cec612f1de2e8244` (upstream version `0.18.0`) |
+| Pinned commit | `476448d7d9f3a5f8e93fcf7d98b47fd52293fe7f` (upstream version `0.19.1`) |
 | Android package | `ai.storyteller.gridcraft` |
-| Published APK | `gridcraft-0.18.0-arm64-v8a-20261109.apk` — 16.2 MB, arm64-v8a, signed (locally, 2026-11-09) |
-| APK sha256 | `b43d19d3ba19d1a17109bf823928b935332de381a7e1f83e18d054c85ac6c472` |
+| Published APK | `gridcraft-0.19.1-arm64-v8a-20261112.apk` — 16.4 MB, arm64-v8a, signed (locally, 2026-11-12) |
+| APK sha256 | `91754013a44f640ddcbc467287ddd22bad8c0e32798e03610c7d6fc5ff0ee6a7` |
 | Upstream files changed | 9 files (1 of them new) — see [`patches/`](patches/) |
 | New port crate | `apps/gridcraft-android/` — 2300 lines of Rust plus resources |
 
@@ -37,7 +37,7 @@ JDK 21, and `cargo install cargo-apk`.
 ```bash
 git clone https://github.com/storytold/gridcraft.git
 cd gridcraft
-git fetch --depth 1 origin 17cb3c83
+git fetch --depth 1 origin 476448d7
 git checkout FETCH_HEAD                        # the exact commit this port targets
 git apply -3 /path/to/0001-gridcraft-android-port.patch
 cp -r /path/to/gridcraft-android apps/             # the shell crate from this repository
@@ -57,7 +57,7 @@ on the `.so` inside the APK.
 ## Install
 
 ```bash
-adb install -r gridcraft-0.18.0-arm64-v8a-20261109.apk
+adb install -r gridcraft-0.19.1-arm64-v8a-20261112.apk
 ```
 or copy the APK to the device and open it (installing from unknown sources must be allowed).
 
@@ -72,7 +72,7 @@ A tick means the check was *run*, not inferred; the wording says how far it goes
 
 | Claim | How it was checked | Result |
 |---|---|---|
-| `patches/…patch` applies to a clean checkout of the pin | `git archive v0.18.0` into a pristine tree + `git apply --check` (then applied and `diff -r` against the built tree) | ✅ applies cleanly; trees identical |
+| `patches/…patch` applies to a clean checkout of the pin | `git archive v0.19.1` into a pristine tree + `git apply --check` (then applied and `diff -r` against the built tree) | ✅ applies cleanly; trees identical |
 | The assembled tree equals the tree the APK was built from | `diff -r` over the whole tree (patched files and every port-crate file) | ✅ no differences |
 | The port crate compiles for Android | `cargo check -p gridcraft-android --target aarch64-linux-android`, run in a tree assembled from scratch (fresh `git fetch` of the pin, patch applied, port crate copied in) | ✅ exit 0 |
 | AutoSum number-format and Format Painter fixes | `cargo test -p gridcraft-engine` (host) | ✅ 4/4 pass; the whole engine lib suite passes 207/207 |

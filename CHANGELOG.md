@@ -1,5 +1,34 @@
 # Changelog
 
+## 2026-11-12 — Re-pinned to upstream 0.19.1
+
+| | |
+|---|---|
+| APK | `gridcraft-0.19.1-arm64-v8a-20261112.apk` — sha256 `91754013a44f640ddcbc467287ddd22bad8c0e32798e03610c7d6fc5ff0ee6a7` (built 2026-11-12, locally signed) |
+| Upstream pin | `476448d7d9f3a5f8e93fcf7d98b47fd52293fe7f` — tag `v0.19.1` (upstream `0.19.1`) |
+| Package | `ai.storyteller.gridcraft` — versionName `0.19.1`, versionCode `16782081`, minSdk 26, targetSdk 35 |
+| ABI | `arm64-v8a` only |
+| ELF page alignment | `0x4000` (16 KB) — Android 16 compatible |
+
+### Changed
+- **The upstream pin moved from 0.18.0 to 0.19.1** — the release carries the 0.19.0 minor bump
+  (workspace version, engine/UI changes) plus a patch on top. The port patch was re-derived against
+  the `v0.19.1` tree; every hunk applied unchanged and no file had to be re-ported by hand. The
+  only content difference in the resubmitted patch is the `Cargo.lock` entry for
+  `gridcraft-android`, whose version follows the workspace, plus the usual line offsets/blob ids.
+- **The shipped `patches/0001-gridcraft-android-port.patch` was complete this round.** It was
+  checked before use against the previous tree's `git diff HEAD` backup: it held all nine files
+  (`Cargo.toml` with the `winit → vendor/winit` switch, `Cargo.lock`, the seven `crates/ui-egui`
+  files, `save_dialogs.rs` as the one new file) and applied to `v0.19.1` with no conflicts.
+- **Verification:** `git apply --check` against a pristine `git archive v0.19.1` tree (port crate
+  and `vendor/winit` copied in as directories) — the regenerated patch applies cleanly, and after
+  applying it `diff -r` over the assembled tree and the tree the APK was built from shows no
+  differences. `cargo check -p gridcraft-android --target aarch64-linux-android` passes (warnings
+  only). The signed APK was verified with the port's `scripts/verify-apk-linux.sh`:
+  `versionName 0.19.1`, `native-code: 'arm64-v8a'`, v2/v3 signatures verify, `android_main` and
+  `ANativeActivity_onCreate` exported, and every `LOAD` segment `0x4000`-aligned.
+
+
 ## 2026-11-09 — Re-pinned to upstream 0.18.0
 
 | | |

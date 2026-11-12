@@ -1,14 +1,14 @@
 diff --git a/Cargo.lock b/Cargo.lock
-index 6f589847..4c7c9457 100644
+index 92451aa8..2cb77214 100644
 --- a/Cargo.lock
 +++ b/Cargo.lock
-@@ -2047,6 +2047,20 @@ dependencies = [
+@@ -2049,6 +2049,20 @@ dependencies = [
   "winresource",
  ]
  
 +[[package]]
 +name = "gridcraft-android"
-+version = "0.18.0"
++version = "0.19.1"
 +dependencies = [
 + "eframe",
 + "egui",
@@ -22,8 +22,8 @@ index 6f589847..4c7c9457 100644
 +
  [[package]]
  name = "gridcraft-calc"
- version = "0.18.0"
-@@ -6425,7 +6439,6 @@ checksum = "589f6da84c646204747d1270a2a5661ea66ed1cced2631d546fdfb155959f9ec"
+ version = "0.19.1"
+@@ -6460,7 +6474,6 @@ checksum = "589f6da84c646204747d1270a2a5661ea66ed1cced2631d546fdfb155959f9ec"
  [[package]]
  name = "winit"
  version = "0.30.13"
@@ -32,10 +32,10 @@ index 6f589847..4c7c9457 100644
   "ahash",
   "android-activity",
 diff --git a/Cargo.toml b/Cargo.toml
-index 6d92c0ca..c014117a 100644
+index f244db53..d3dfc39c 100644
 --- a/Cargo.toml
 +++ b/Cargo.toml
-@@ -113,4 +113,4 @@ egui_system_font_provider = { git = "https://github.com/storytold/egui.git", rev
+@@ -114,4 +114,4 @@ egui_system_font_provider = { git = "https://github.com/storytold/egui.git", rev
  eframe = { git = "https://github.com/storytold/egui.git", rev = "6d518fc799681571963842f95b55a6b68431b15a" }
  egui_demo_lib = { git = "https://github.com/storytold/egui.git", rev = "6d518fc799681571963842f95b55a6b68431b15a" }
  egui_inspection = { git = "https://github.com/storytold/egui.git", rev = "6d518fc799681571963842f95b55a6b68431b15a" }
@@ -202,7 +202,7 @@ index e4cd5bb2..1b893396 100644
                      }
                  }
 diff --git a/crates/ui-egui/src/lib.rs b/crates/ui-egui/src/lib.rs
-index dffe3ed8..c9dd18cb 100644
+index f2bcf3cf..50b698a6 100644
 --- a/crates/ui-egui/src/lib.rs
 +++ b/crates/ui-egui/src/lib.rs
 @@ -51,6 +51,7 @@ pub mod pivot_pane;
@@ -212,8 +212,8 @@ index dffe3ed8..c9dd18cb 100644
 +mod save_dialogs;
  pub mod tabs;
  pub mod text_box;
- pub mod theme;
-@@ -235,6 +236,9 @@ pub struct SheetApp {
+ mod text_direction;
+@@ -236,6 +237,9 @@ pub struct SheetApp {
      /// Dismissible info bar under the ribbon (open-time notices).
      pub notice: Option<Notice>,
      pub services: Services,
