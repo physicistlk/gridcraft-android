@@ -1,5 +1,34 @@
 # Changelog
 
+## 2026-11-18 — Physical mouse: right button is a real secondary click
+
+| | |
+|---|---|
+| APK | `gridcraft-0.19.1-arm64-v8a-20261118.apk` — sha256 `e1f6d64e3f4c9fc5244a73d7455ca138e3d01c981b4fa67060d77ba241c18af5` (built 2026-11-18, locally signed) |
+| Upstream pin | `476448d7d9f3a5f8e93fcf7d98b47fd52293fe7f` — tag `v0.19.1` (upstream `0.19.1`, unchanged this round) |
+| Package | `ai.storyteller.gridcraft` — versionName `0.19.1`, versionCode `16782081`, minSdk 26, targetSdk 35 |
+| ABI | `arm64-v8a` only |
+| ELF page alignment | `0x4000` (16 KB) — Android 16 compatible |
+
+### Changed
+- **physical mouse: right button is a real secondary click.** The shared `vendor/winit` Android
+  backend now reports a real mouse/trackpad as `CursorMoved` + `MouseInput` instead of flattening
+  it into touch events. The physical right button arrives as a genuine secondary click, and
+  long-press-to-context-menu no longer applies to a mouse. Finger input (touch, long-press, drag)
+  behaves exactly as before.
+- Only `vendor/winit` changed; `vendor/winit` is not part of the port patch (it is supplied as a
+  directory), so the port patch is **byte-identical** to the 2026-11-12 one: 332 lines, 9 files,
+  including `save_dialogs.rs` and the `winit = { path = "vendor/winit" }` switch in `Cargo.toml`.
+  Nothing had to be re-ported by hand.
+- **Verification:** `cp` of the fixed `vendor/winit` into a fresh `v0.19.1` build tree plus
+  `git apply -3` of the shipped patch applied every hunk cleanly. The build log shows
+  `Compiling winit v0.30.13 (/…/vendor/winit)` followed by the workspace crates, so the APK
+  really contains the fixed backend. `scripts/verify-apk-linux.sh` ends in
+  `VERIFICATION PASSED`: `versionName 0.19.1`, `native-code: 'arm64-v8a'`, v2/v3 signatures
+  verify, `android_main` and `ANativeActivity_onCreate` exported, every `LOAD` segment
+  `0x4000`-aligned. `git apply --check` of the regenerated patch against a pristine
+  `git archive v0.19.1` tree prints `PATCH APPLIES CLEAN`.
+
 ## 2026-11-12 — Re-pinned to upstream 0.19.1
 
 | | |
